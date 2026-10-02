@@ -15,6 +15,14 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
+/** A substitution the manager has scripted for this match. */
+data class PlannedSubstitution(
+    val playerOffId: Long,
+    val playerOnId: Long,
+    /** Minute the change is made; 45 is treated as half time and is free of a window. */
+    val minute: Int = 45
+)
+
 /** Inputs for one side of a match. */
 data class MatchTeamInput(
     val clubId: Long,
@@ -25,18 +33,48 @@ data class MatchTeamInput(
     /** All players belonging to this club, keyed by id. */
     val squadById: Map<Long, Player>,
     /** Effective strength including the difficulty-scaled AI adjustment. */
-    val strengthMultiplier: Double = 1.0
+    val strengthMultiplier: Double = 1.0,
+    /** Manager-scripted substitutions, applied instead of the default pattern. */
+    val plannedSubstitutions: List<PlannedSubstitution> = emptyList()
 )
 
 data class SimulatedMatch(
     val homeGoals: Int,
     val awayGoals: Int,
+    /** Goals scored in normal time only, excluding extra time. */
+    val homeGoalsRegular: Int = homeGoals,
+    val awayGoalsRegular: Int = awayGoals,
     val homeStats: TeamMatchStats,
     val awayStats: TeamMatchStats,
     val events: List<MatchEvent>,
     val ratings: List<PlayerMatchRating>,
-    val playerOfTheMatchId: Long?
+    val playerOfTheMatchId: Long?,
+    /** Per-15-minute momentum for the home side, -100..100. */
+    val momentum: List<Int> = emptyList(),
+    /** Set when a knockout tie needed a shootout. */
+    val shootoutHome: Int? = null,
+    val shootoutAway: Int? = null
 )
+
+/** The competition rules that shape a match. */
+data class MatchRules(
+    /** 90 for a league match, 120 when extra time can be played. */
+    val allowExtraTime: Boolean = false,
+    val allowShootout: Boolean = false,
+    val maxSubstitutions: Int = 5,
+    /** Separate in-match substitution opportunities; half time is free. */
+    val maxSubstitutionWindows: Int = 3
+) {
+    companion object {
+        val LEAGUE = MatchRules()
+        val KNOCKOUT = MatchRules(
+            allowExtraTime = true,
+            allowShootout = true,
+            maxSubstitutions = 5,
+            maxSubstitutionWindows = 3
+        )
+    }
+}
 
 /**
  * The match simulation engine.
@@ -70,7 +108,8 @@ object MatchEngine {
         random: Random,
         homeAdvantage: Boolean = true,
         /** Reduces randomness so the player's decisions weigh more heavily. */
-        determinism: Double = 1.0
+        determinism: Double = 1.0,
+        rules: MatchRules = MatchRules.LEAGUE
     ): SimulatedMatch {
         val homePlayers = TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation)
         val awayPlayers = TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation)
@@ -243,11 +282,24 @@ object MatchEngine {
             )
         }
 
-        // ---- Substitutions (a reasonable default pattern when none are scripted) ----
-        val homeSubs = defaultSubstitutions(homePlayers, home.selection, home.squadById, random)
-        val awaySubs = defaultSubstitutions(awayPlayers, away.selection, away.squadById, random)
+        // ---- Substitutions ----
+        // Scripted changes take priority; otherwise a sensible default pattern is
+        // used. Either way the modern rules are enforced: five players across
+        // three in-match windows, with half-time changes not using a window.
+        val homeSubs = substitutionsFor(home, homePlayers, random, rules)
+        val awaySubs = substitutionsFor(away, awayPlayers, random, rules)
         homeEvents += homeSubs
         awayEvents += awaySubs
+
+        // Players who came off or on only played part of the match, which must be
+        // reflected in their match rating's minutes.
+        val totalMinutes = if (rules.allowExtraTime) 120 else 90
+        applySubMinutes(ratingsTracker, homeSubs, totalMinutes)
+        applySubMinutes(ratingsTracker, awaySubs, totalMinutes)
+
+        // ---- Stoppage time ----
+        val firstHalfStoppage = 1 + random.nextInt(0, 4)
+        val secondHalfStoppage = 2 + random.nextInt(0, 6)
 
         // ---- Shots, corners and pass accuracy derived from the same model ----
         val homeShots = shotsFor(homeGoals, homeXg, home.tactics, random)
@@ -263,30 +315,123 @@ object MatchEngine {
 
         // ---- Assemble the timeline ----
         val halfTime = MatchEvent(
-            minute = 45,
+            minute = 45 + firstHalfStoppage,
             type = MatchEventType.HALF_TIME,
             clubId = home.clubId,
             detail = "Half time: ${home.clubName} ${homeGoalMinutes.count { it <= 45 }} - " +
-                "${awayGoalMinutes.count { it <= 45 }} ${away.clubName}"
+                "${awayGoalMinutes.count { it <= 45 }} ${away.clubName} (+$firstHalfStoppage)"
         )
-        val fullTime = MatchEvent(
-            minute = 90,
-            type = MatchEventType.FULL_TIME,
-            clubId = home.clubId,
-            detail = "Full time: ${home.clubName} $homeGoals - $awayGoals ${away.clubName}"
-        )
+        val fullTimeMinute = 90 + secondHalfStoppage
 
         val allTimeline = (homeEvents + awayEvents)
             .sortedBy { it.minute }
             .toMutableList()
         allTimeline.add(halfTime)
+
+        // ---- Extra time for knockout ties level after 90 minutes ----
+        var homeEtGoals = 0
+        var awayEtGoals = 0
+        var shootoutHome: Int? = null
+        var shootoutAway: Int? = null
+        var extraTimePlayed = false
+
+        if (rules.allowExtraTime && homeGoals == awayGoals) {
+            extraTimePlayed = true
+            allTimeline.add(
+                MatchEvent(
+                    minute = fullTimeMinute,
+                    type = MatchEventType.EXTRA_TIME_START,
+                    clubId = home.clubId,
+                    detail = "Level after 90 minutes - extra time to be played"
+                )
+            )
+            // Extra time produces roughly a third of a normal half's chances.
+            val etHomeXg = homeXg * 0.30
+            val etAwayXg = awayXg * 0.30
+            homeEtGoals = drawGoals(etHomeXg, random, determinism).coerceAtMost(3)
+            awayEtGoals = drawGoals(etAwayXg, random, determinism).coerceAtMost(3)
+
+            repeat(homeEtGoals) {
+                val scorer = pickAttacker(homePlayers, random)
+                val assister = pickAssister(homePlayers, scorer, random)
+                allTimeline.add(
+                    MatchEvent(
+                        minute = random.nextInt(91, 121),
+                        type = MatchEventType.GOAL,
+                        clubId = home.clubId,
+                        playerId = scorer?.id,
+                        playerName = scorer?.name ?: "",
+                        secondaryPlayerId = assister?.id,
+                        secondaryPlayerName = assister?.name ?: "",
+                        detail = "Extra time goal"
+                    )
+                )
+                if (scorer != null) ratingsTracker.addGoal(scorer.id)
+                if (assister != null) ratingsTracker.addAssist(assister.id)
+            }
+            repeat(awayEtGoals) {
+                val scorer = pickAttacker(awayPlayers, random)
+                val assister = pickAssister(awayPlayers, scorer, random)
+                allTimeline.add(
+                    MatchEvent(
+                        minute = random.nextInt(91, 121),
+                        type = MatchEventType.GOAL,
+                        clubId = away.clubId,
+                        playerId = scorer?.id,
+                        playerName = scorer?.name ?: "",
+                        secondaryPlayerId = assister?.id,
+                        secondaryPlayerName = assister?.name ?: "",
+                        detail = "Extra time goal"
+                    )
+                )
+                if (scorer != null) ratingsTracker.addGoal(scorer.id)
+                if (assister != null) ratingsTracker.addAssist(assister.id)
+            }
+            allTimeline.add(
+                MatchEvent(
+                    minute = 120,
+                    type = MatchEventType.EXTRA_TIME_END,
+                    clubId = home.clubId,
+                    detail = "End of extra time: ${home.clubName} ${homeGoals + homeEtGoals} - " +
+                        "${awayGoals + awayEtGoals} ${away.clubName}"
+                )
+            )
+
+            // ---- Penalty shootout if still level ----
+            if (rules.allowShootout && homeGoals + homeEtGoals == awayGoals + awayEtGoals) {
+                val (sh, sa) = ChampionsLeagueEngine.simulateShootout(random)
+                shootoutHome = sh
+                shootoutAway = sa
+                var minute = 121
+                repeat(maxOf(sh, sa)) {
+                    minute++
+                    allTimeline.add(
+                        MatchEvent(
+                            minute = minute,
+                            type = MatchEventType.PENALTY_SHOOTOUT_GOAL,
+                            clubId = home.clubId,
+                            detail = "Shootout: ${home.clubName} ${minOf(it + 1, sh)} - " +
+                                "${minOf(it + 1, sa)} ${away.clubName}"
+                        )
+                    )
+                }
+            }
+        }
+
+        val fullTime = MatchEvent(
+            minute = fullTimeMinute,
+            type = MatchEventType.FULL_TIME,
+            clubId = home.clubId,
+            detail = "Full time: ${home.clubName} ${homeGoals + homeEtGoals} - " +
+                "${awayGoals + awayEtGoals} ${away.clubName}"
+        )
         allTimeline.add(fullTime)
         val timeline = allTimeline.sortedBy { it.minute }
         events += timeline
 
         val homeStats = TeamMatchStats(
             clubId = home.clubId,
-            goals = homeGoals,
+            goals = homeGoals + homeEtGoals,
             shots = homeShots,
             shotsOnTarget = homeOnTarget,
             possession = possessionHome,
@@ -299,7 +444,7 @@ object MatchEngine {
         )
         val awayStats = TeamMatchStats(
             clubId = away.clubId,
-            goals = awayGoals,
+            goals = awayGoals + awayEtGoals,
             shots = awayShots,
             shotsOnTarget = awayOnTarget,
             possession = 100 - possessionHome,
@@ -325,15 +470,54 @@ object MatchEngine {
 
         val motm = ratings.maxByOrNull { it.rating }?.playerId
 
+        // ---- Momentum: a per-15-minute read of who is on top ----
+        val momentum = buildMomentum(
+            homeXg = homeXg,
+            awayXg = awayXg,
+            homeGoals = homeGoals + homeEtGoals,
+            awayGoals = awayGoals + awayEtGoals,
+            homeStrength = homeStrength,
+            awayStrength = awayStrength,
+            random = random
+        )
+
         return SimulatedMatch(
-            homeGoals = homeGoals,
-            awayGoals = awayGoals,
+            homeGoals = homeGoals + homeEtGoals,
+            awayGoals = awayGoals + awayEtGoals,
+            homeGoalsRegular = homeGoals,
+            awayGoalsRegular = awayGoals,
             homeStats = homeStats,
             awayStats = awayStats,
             events = events,
             ratings = ratings,
-            playerOfTheMatchId = motm
+            playerOfTheMatchId = motm,
+            momentum = momentum,
+            shootoutHome = shootoutHome,
+            shootoutAway = shootoutAway
         )
+    }
+
+    /**
+     * Momentum is a coarse, presentation-friendly signal of which side is on top
+     * across the match, on a -100..100 scale where positive favours the home team.
+     */
+    private fun buildMomentum(
+        homeXg: Double,
+        awayXg: Double,
+        homeGoals: Int,
+        awayGoals: Int,
+        homeStrength: TeamStrength,
+        awayStrength: TeamStrength,
+        random: Random
+    ): List<Int> {
+        val base = (homeStrength.overall - awayStrength.overall) * 1.2
+        val goalSwing = (homeGoals - awayGoals) * 8.0
+        return (0 until 6).map { i ->
+            // Momentum swings through the match rather than staying flat.
+            val wave = kotlin.math.sin(i * 1.1) * 14.0
+            val value = base + goalSwing + wave + random.nextDouble(-10.0, 10.0)
+            value.coerceIn(-100.0, 100.0).roundToInt()
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -356,8 +540,8 @@ object MatchEngine {
         awayStrength: TeamStrength,
         homeAdvantage: Boolean
     ): Int {
-        val homeMid = homeStrength.midfield * home.tactics.style.possessionBias
-        val awayMid = awayStrength.midfield * away.tactics.style.possessionBias
+        val homeMid = homeStrength.midfield * home.tactics.possessionMultiplier
+        val awayMid = awayStrength.midfield * away.tactics.possessionMultiplier
         val adv = if (homeAdvantage) 1.05 else 1.0
         val total = (homeMid * adv) + awayMid
         if (total <= 0.0) return 50
@@ -387,8 +571,8 @@ object MatchEngine {
 
         var xg = BASE_XG * qualityFactor
         xg *= tactics.mentality.attackModifier
-        xg *= tactics.style.chanceQualityBias
-        xg *= tactics.tempo.chanceVolume
+        xg *= tactics.chanceQualityMultiplier
+        xg *= tactics.chanceVolumeMultiplier
         // Dominating the ball helps, but with diminishing returns.
         xg *= 0.86 + possessionShare * 0.28
         // A high line against a strong attack invites chances; a deep line denies them.
@@ -480,10 +664,8 @@ object MatchEngine {
 
     private fun drawFouls(tactics: Tactics, strength: TeamStrength, random: Random): Int {
         val base = 11.0
-        val tempoFactor = tactics.tempo.errorRate
-        val pressFactor = if (tactics.style == com.footymanager.simulator.domain.model.PlayStyle.HIGH_PRESS) 1.18 else 1.0
         val lineFactor = 0.9 + tactics.defensiveLine.pressingHeight * 0.12
-        val mean = base * tempoFactor * pressFactor * lineFactor
+        val mean = base * tactics.foulMultiplier * lineFactor
         return poisson(mean, random).coerceIn(3, 26)
     }
 
@@ -553,39 +735,106 @@ object MatchEngine {
 
     private fun round1(v: Double): Double = (v * 10).roundToInt() / 10.0
 
-    private fun defaultSubstitutions(
+    /** Converts substitution events into minutes played for each involved player. */
+    private fun applySubMinutes(
+        tracker: RatingTracker,
+        subs: List<MatchEvent>,
+        totalMinutes: Int
+    ) {
+        for (event in subs) {
+            val onId = event.playerId ?: continue
+            val offId = event.secondaryPlayerId ?: continue
+            tracker.setMinutes(offId, event.minute)
+            tracker.setMinutes(onId, (totalMinutes - event.minute).coerceAtLeast(1))
+        }
+    }
+
+    /**
+     * Builds the substitution events for one side.
+     *
+     * Modern rules are enforced: at most five players are introduced, and only
+     * three in-match opportunities may be used. Half-time changes (minute 45) are
+     * free and do not consume one of those three windows.
+     *
+     * When the manager has scripted changes they are used; otherwise a sensible
+     * default pattern is generated so AI teams still rotate their squads.
+     */
+    private fun substitutionsFor(
+        input: MatchTeamInput,
         onPitch: List<MatchPlayer>,
-        selection: TeamSelection,
-        squadById: Map<Long, Player>,
-        random: Random
+        random: Random,
+        rules: MatchRules
     ): List<MatchEvent> {
-        if (selection.substitutes.isEmpty()) return emptyList()
-        val events = mutableListOf<MatchEvent>()
-        val bench = selection.substitutes.mapNotNull { squadById[it] }
+        val bench = input.selection.substitutes.mapNotNull { input.squadById[it] }
         if (bench.isEmpty()) return emptyList()
 
-        val subCount = 1 + random.nextInt(3)
-        val usedSubs = mutableSetOf<Long>()
+        val events = mutableListOf<MatchEvent>()
+        val used = mutableSetOf<Long>()
         val onPitchIds = onPitch.map { it.id }.toMutableSet()
 
-        repeat(subCount) {
-            val off = onPitch.filter { !it.isGoalkeeper && it.id in onPitchIds && it.id !in usedSubs }
-                .randomOrNull(random) ?: return@repeat
-            val on = bench.filter { it.id !in usedSubs && it.id !in onPitchIds }
-                .randomOrNull(random) ?: return@repeat
-            usedSubs += off.id
-            usedSubs += on.id
-            onPitchIds.remove(off.id)
-            onPitchIds.add(on.id)
+        val scripted = input.plannedSubstitutions
+            .filter { it.playerOffId in onPitchIds && it.playerOnId !in onPitchIds }
+            .sortedBy { it.minute }
+
+        val changes: List<Pair<Long, Long>> = if (scripted.isNotEmpty()) {
+            scripted.map { it.playerOffId to it.playerOnId }
+        } else {
+            // Default AI pattern: rotate two or three players, mostly late on.
+            val count = 1 + random.nextInt(3)
+            (0 until count).mapNotNull {
+                val off = onPitch.filter { !it.isGoalkeeper && it.id in onPitchIds && it.id !in used }
+                    .randomOrNull(random) ?: return@mapNotNull null
+                val on = bench.filter { it.id !in used && it.id !in onPitchIds }
+                    .randomOrNull(random) ?: return@mapNotNull null
+                off.id to on.id
+            }
+        }
+
+        var playersUsed = 0
+        var windowsUsed = 0
+        // Track the minute of each window so several changes in the same window
+        // only consume one opportunity.
+        var currentWindowMinute = -1
+
+        for ((offId, onId) in changes) {
+            if (playersUsed >= rules.maxSubstitutions) break
+            if (offId !in onPitchIds || onId in onPitchIds) continue
+
+            val minute = if (scripted.isNotEmpty()) {
+                scripted.firstOrNull { it.playerOffId == offId }?.minute ?: 60
+            } else {
+                random.nextInt(55, 88)
+            }
+
+            val isHalfTime = minute == 45
+            if (!isHalfTime) {
+                // A change at a new minute needs a fresh window; several changes
+                // at the same minute share one.
+                if (currentWindowMinute != minute) {
+                    if (windowsUsed >= rules.maxSubstitutionWindows) continue
+                    windowsUsed++
+                    currentWindowMinute = minute
+                }
+            }
+
+            val on = input.squadById[onId] ?: continue
+            val off = input.squadById[offId] ?: continue
+            used += offId
+            used += onId
+            onPitchIds.remove(offId)
+            onPitchIds.add(onId)
+            playersUsed++
+
             events += MatchEvent(
-                minute = random.nextInt(55, 88),
+                minute = minute,
                 type = MatchEventType.SUBSTITUTION,
-                clubId = 0L,
-                playerId = on.id,
+                clubId = input.clubId,
+                playerId = onId,
                 playerName = on.name,
-                secondaryPlayerId = off.id,
+                secondaryPlayerId = offId,
                 secondaryPlayerName = off.name,
-                detail = "${on.name} replaces ${off.name}"
+                detail = if (isHalfTime) "${on.name} replaces ${off.name} (half time)"
+                else "${on.name} replaces ${off.name}"
             )
         }
         return events

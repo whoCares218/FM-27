@@ -109,15 +109,235 @@ enum class Tempo(val label: String) {
         }
 }
 
+/** How wide the team plays; stretches the pitch or congests the middle. */
+@Serializable
+enum class Width(val label: String) {
+    NARROW("Narrow"),
+    NORMAL("Normal"),
+    WIDE("Wide");
+
+    val attackBias: Double
+        get() = when (this) {
+            NARROW -> 0.96
+            NORMAL -> 1.0
+            WIDE -> 1.06
+        }
+
+    val defensiveBias: Double
+        get() = when (this) {
+            NARROW -> 1.04
+            NORMAL -> 1.0
+            WIDE -> 0.96
+        }
+}
+
+/** How aggressively the team presses to win the ball back. */
+@Serializable
+enum class Pressing(val label: String) {
+    LOW("Low"),
+    MEDIUM("Medium"),
+    HIGH("High"),
+    VERY_HIGH("Very High");
+
+    val turnoverBias: Double
+        get() = when (this) {
+            LOW -> 0.90
+            MEDIUM -> 1.0
+            HIGH -> 1.10
+            VERY_HIGH -> 1.18
+        }
+
+    /** Fatigue cost; heavy pressing wears players down faster. */
+    val fatigueBias: Double
+        get() = when (this) {
+            LOW -> 0.90
+            MEDIUM -> 1.0
+            HIGH -> 1.14
+            VERY_HIGH -> 1.26
+        }
+
+    /** Aggressive pressing concedes more fouls. */
+    val foulBias: Double
+        get() = when (this) {
+            LOW -> 0.88
+            MEDIUM -> 1.0
+            HIGH -> 1.12
+            VERY_HIGH -> 1.22
+        }
+}
+
+/** Passing length and risk profile. */
+@Serializable
+enum class PassingStyle(val label: String) {
+    SHORT("Short"),
+    MIXED("Mixed"),
+    DIRECT("Direct"),
+    LONG_BALL("Long Ball");
+
+    val possessionBias: Double
+        get() = when (this) {
+            SHORT -> 1.08
+            MIXED -> 1.0
+            DIRECT -> 0.95
+            LONG_BALL -> 0.90
+        }
+
+    val chanceQualityBias: Double
+        get() = when (this) {
+            SHORT -> 1.0
+            MIXED -> 1.0
+            DIRECT -> 1.04
+            LONG_BALL -> 0.97
+        }
+}
+
+/** How the team builds attacks from the back. */
+@Serializable
+enum class BuildUp(val label: String) {
+    PATIENT("Patient"),
+    BALANCED("Balanced"),
+    QUICK("Quick");
+
+    val possessionBias: Double
+        get() = when (this) {
+            PATIENT -> 1.06
+            BALANCED -> 1.0
+            QUICK -> 0.96
+        }
+
+    val chanceVolumeBias: Double
+        get() = when (this) {
+            PATIENT -> 0.95
+            BALANCED -> 1.0
+            QUICK -> 1.07
+        }
+}
+
+/** Emphasis on counter-attacking when possession is won. */
+@Serializable
+enum class CounterAttack(val label: String) {
+    OFF("Off"),
+    BALANCED("Balanced"),
+    FREQUENT("Frequent");
+
+    val chanceQualityBias: Double
+        get() = when (this) {
+            OFF -> 0.98
+            BALANCED -> 1.0
+            FREQUENT -> 1.07
+        }
+
+    val possessionBias: Double
+        get() = when (this) {
+            OFF -> 1.02
+            BALANCED -> 1.0
+            FREQUENT -> 0.94
+        }
+}
+
+/** Possession focus: how much the team values keeping the ball. */
+@Serializable
+enum class PossessionFocus(val label: String) {
+    LOW("Low"),
+    MEDIUM("Medium"),
+    HIGH("High");
+
+    val possessionBias: Double
+        get() = when (this) {
+            LOW -> 0.93
+            MEDIUM -> 1.0
+            HIGH -> 1.09
+        }
+}
+
+/** Frequency of crosses into the box. */
+@Serializable
+enum class Crossing(val label: String) {
+    RARE("Rare"),
+    MIXED("Mixed"),
+    FREQUENT("Frequent");
+
+    val chanceVolumeBias: Double
+        get() = when (this) {
+            RARE -> 0.97
+            MIXED -> 1.0
+            FREQUENT -> 1.05
+        }
+}
+
+/** How physically aggressive the team is in the tackle. */
+@Serializable
+enum class Aggression(val label: String) {
+    LOW("Low"),
+    NORMAL("Normal"),
+    HIGH("High");
+
+    val foulBias: Double
+        get() = when (this) {
+            LOW -> 0.85
+            NORMAL -> 1.0
+            HIGH -> 1.22
+        }
+
+    val defensiveBias: Double
+        get() = when (this) {
+            LOW -> 0.97
+            NORMAL -> 1.0
+            HIGH -> 1.05
+        }
+}
+
 @Serializable
 data class Tactics(
     val formationId: String = Formation.F4231.id,
     val mentality: Mentality = Mentality.BALANCED,
     val style: PlayStyle = PlayStyle.BALANCED,
     val defensiveLine: DefensiveLine = DefensiveLine.NORMAL,
-    val tempo: Tempo = Tempo.NORMAL
+    val tempo: Tempo = Tempo.NORMAL,
+    val width: Width = Width.NORMAL,
+    val pressing: Pressing = Pressing.MEDIUM,
+    val passingStyle: PassingStyle = PassingStyle.MIXED,
+    val buildUp: BuildUp = BuildUp.BALANCED,
+    val counterAttack: CounterAttack = CounterAttack.BALANCED,
+    val possessionFocus: PossessionFocus = PossessionFocus.MEDIUM,
+    val crossing: Crossing = Crossing.MIXED,
+    val aggression: Aggression = Aggression.NORMAL
 ) {
     val formation: Formation get() = Formation.byId(formationId)
+
+    /** Combined possession multiplier from every instruction that affects it. */
+    val possessionMultiplier: Double
+        get() = style.possessionBias *
+            passingStyle.possessionBias *
+            buildUp.possessionBias *
+            counterAttack.possessionBias *
+            possessionFocus.possessionBias
+
+    /** Combined attacking-chance quality multiplier. */
+    val chanceQualityMultiplier: Double
+        get() = style.chanceQualityBias *
+            passingStyle.chanceQualityBias *
+            counterAttack.chanceQualityBias *
+            width.attackBias
+
+    /** Combined chance-volume multiplier (how many chances are created). */
+    val chanceVolumeMultiplier: Double
+        get() = tempo.chanceVolume *
+            buildUp.chanceVolumeBias *
+            crossing.chanceVolumeBias *
+            pressing.turnoverBias
+
+    /** Combined defensive solidity multiplier. */
+    val defensiveMultiplier: Double
+        get() = width.defensiveBias * aggression.defensiveBias
+
+    /** Combined fatigue cost per match. */
+    val fatigueMultiplier: Double
+        get() = style.fatigueBias * pressing.fatigueBias
+
+    /** Combined foul propensity. */
+    val foulMultiplier: Double
+        get() = tempo.errorRate * pressing.foulBias * aggression.foulBias
 
     companion object {
         val DEFAULT = Tactics()
@@ -169,8 +389,13 @@ enum class MatchEventType {
     CHANCE_MISSED,
     HALF_TIME,
     FULL_TIME,
+    EXTRA_TIME_START,
+    EXTRA_TIME_END,
     PENALTY_SHOOTOUT_GOAL,
     PENALTY_SHOOTOUT_MISS,
+    VAR,
+    OFFSIDE,
+    TACTICAL_CHANGE,
     INFO
 }
 
@@ -234,7 +459,11 @@ data class MatchResult(
     val playerOfTheMatchId: Long? = null,
     /** Set for knockout ties decided on penalties; null for league games. */
     val penaltyShootoutHome: Int? = null,
-    val penaltyShootoutAway: Int? = null
+    val penaltyShootoutAway: Int? = null,
+    /** Per-15-minute momentum swing for the home side, -100..100. */
+    val momentum: List<Int> = emptyList(),
+    /** True when the match needed extra time. */
+    val extraTime: Boolean = false
 ) {
     val isHomeWin: Boolean get() = homeGoals > awayGoals
     val isAwayWin: Boolean get() = awayGoals > homeGoals

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -38,6 +39,10 @@ object Routes {
     const val STATISTICS = "statistics"
     const val TRAINING = "training"
     const val FIXTURES = "fixtures"
+    const val CHAMPIONS_LEAGUE = "champions_league"
+    const val STADIUM = "stadium"
+    const val SPONSORS = "sponsors"
+    const val REWARDS = "rewards"
 
     fun playerDetail(playerId: Long) = "player/$playerId"
 }
@@ -71,7 +76,11 @@ data class MoreDestination(
 
 val moreDestinations: List<MoreDestination> = listOf(
     MoreDestination(Routes.FIXTURES, "Fixtures", "Your full season schedule", Icons.Outlined.Groups),
+    MoreDestination(Routes.CHAMPIONS_LEAGUE, "Champions League", "Europe's elite competition", Icons.Outlined.EmojiEvents),
     MoreDestination(Routes.TRAINING, "Training", "Set the weekly training focus", Icons.Outlined.Tune),
+    MoreDestination(Routes.STADIUM, "Stadium", "Capacity, tickets and expansion", Icons.Outlined.Home),
+    MoreDestination(Routes.SPONSORS, "Sponsorship", "Sign a season deal", Icons.Outlined.SwapHoriz),
+    MoreDestination(Routes.REWARDS, "Bonus Rewards", "Watch a short ad for club funds", Icons.Outlined.Star),
     MoreDestination(Routes.FINANCES, "Finances", "Balance, budgets and transfers", Icons.Outlined.SwapHoriz),
     MoreDestination(Routes.BOARD, "Board", "Confidence and season objectives", Icons.Outlined.Home),
     MoreDestination(Routes.STATISTICS, "Statistics", "Club and player numbers", Icons.Outlined.EmojiEvents),

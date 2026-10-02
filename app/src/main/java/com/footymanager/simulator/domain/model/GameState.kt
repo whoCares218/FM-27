@@ -134,7 +134,8 @@ data class NewsItem(
 
 @Serializable
 enum class LedgerCategory {
-    TRANSFER_IN, TRANSFER_OUT, WAGES, MATCHDAY, PRIZE_MONEY, BOARD_INJECTION, BOARD_ADJUSTMENT, OTHER;
+    TRANSFER_IN, TRANSFER_OUT, WAGES, MATCHDAY, PRIZE_MONEY, BOARD_INJECTION, BOARD_ADJUSTMENT,
+    SPONSORSHIP, STADIUM, COMPETITION_REVENUE, OTHER;
 
     val label: String
         get() = when (this) {
@@ -145,6 +146,9 @@ enum class LedgerCategory {
             PRIZE_MONEY -> "Prize money"
             BOARD_INJECTION -> "Board investment"
             BOARD_ADJUSTMENT -> "Board adjustment"
+            SPONSORSHIP -> "Sponsorship"
+            STADIUM -> "Stadium"
+            COMPETITION_REVENUE -> "Competition"
             OTHER -> "Other"
         }
 }

@@ -22,10 +22,21 @@ is verified with Robolectric. Keep the suite passing before building a release.
   are the persistence interfaces; `SaveRepository`/`SettingsRepository` are the
   DataStore-backed production implementations.
 - `domain/engine` — match simulation, league tables, season progression, transfers,
-  training, development. Deterministic and seedable.
+  training, development, the Champions League and club finances. Deterministic and
+  seedable.
 - `viewmodel/GameViewModel` — the single ViewModel that wires engines to the UI.
 - `ui/` — Compose screens and reusable components; `ui/navigation/Routes.kt` holds
   the six bottom-navigation tabs.
+- `ui/sound/SoundManager.kt` — synthesised UI cues (no audio assets). Gated by the
+  `soundEnabled` setting; a future AdMob integration replaces
+  `ui/screens/RewardScreen.kt`'s `RewardAdProvider` without touching the UI.
+
+## League sizes
+
+Every league holds 16 clubs so all leagues share the same 30-matchday calendar and
+`Career.totalMatchdays()` stays consistent. Adding clubs to one league alone makes
+its season longer than the others, so the extra rounds are never played. Keep the
+leagues the same size, or give each league its own matchday count.
 
 ## Testing conventions
 

@@ -250,7 +250,13 @@ fun FixturesScreen(career: Career) {
     val fixtures = remember(career.fixtures, career.userClubId) {
         career.fixtures
             .filter { it.involves(career.userClubId) }
-            .sortedBy { it.matchday }
+            .sortedWith(
+                compareBy(
+                    { it.date?.let { d -> d.year * 10_000 + d.month * 100 + d.day } ?: Int.MAX_VALUE },
+                    { it.matchday },
+                    { it.id }
+                )
+            )
     }
     val results = remember(career.results) { career.results.associateBy { it.matchId } }
 
@@ -275,14 +281,14 @@ fun FixturesScreen(career: Career) {
                 padding = 12.dp
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.width(52.dp)) {
+                    Column(modifier = Modifier.width(56.dp)) {
                         Text(
-                            text = "MD${match.matchday}",
+                            text = match.competition.shortLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = if (isHome) "HOME" else "AWAY",
+                            text = match.date?.let { "${it.day}/${it.month}" } ?: "MD${match.matchday}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -298,7 +304,9 @@ fun FixturesScreen(career: Career) {
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = if (isNext) "Next match" else if (match.isPlayed) "Played" else "Scheduled",
+                            text = if (isNext) "Next match"
+                            else if (match.isPlayed) "Played"
+                            else "${if (isHome) "Home" else "Away"} · Matchday ${match.matchday}",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (isNext) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant

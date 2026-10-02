@@ -17,7 +17,8 @@ internal class RatingTracker {
         var goals: Int = 0,
         var assists: Int = 0,
         var yellows: Int = 0,
-        var reds: Int = 0
+        var reds: Int = 0,
+        var minutes: Int = 90
     )
 
     private val entries = mutableMapOf<Long, Entry>()
@@ -26,6 +27,11 @@ internal class RatingTracker {
         for (p in players) {
             entries[p.id] = Entry(p, isHome)
         }
+    }
+
+    /** Records how long a player was actually on the pitch. */
+    fun setMinutes(playerId: Long, minutes: Int) {
+        entries[playerId]?.minutes = minutes.coerceIn(1, 120)
     }
 
     fun addGoal(playerId: Long) {
@@ -97,7 +103,7 @@ internal class RatingTracker {
                 rating = (rating.coerceIn(3.5, 10.0) * 10).roundToInt() / 10.0,
                 goals = entry.goals,
                 assists = entry.assists,
-                minutesPlayed = if (entry.reds > 0) 60 else 90,
+                minutesPlayed = entry.minutes,
                 yellowCards = entry.yellows,
                 redCards = entry.reds
             )

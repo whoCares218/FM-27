@@ -62,7 +62,7 @@ fun HomeScreen(
     onStartNextSeason: () -> Unit
 ) {
     val club = career.userClub
-    val nextMatch = career.nextMatch()
+    val nextMatch = career.nextFixtureAnyCompetition()
     val league = League.byId(career.userLeagueId)
     val position = career.userLeaguePosition
     val recentForm = career.recentForm(career.userClubId)
@@ -360,7 +360,7 @@ private fun NextMatchCard(career: Career, match: Match) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Matchday ${match.matchday}",
+                    text = match.competitionShortLabel(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -415,6 +415,14 @@ fun formChar(career: Career, match: Match): Char {
         scored == conceded -> 'D'
         else -> 'L'
     }
+}
+
+/** Short competition tag shown on fixture cards. */
+fun Match.competitionShortLabel(): String = when (competition) {
+    com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE -> "Champions League"
+    com.footymanager.simulator.domain.model.CompetitionType.DOMESTIC_CUP -> "Domestic Cup"
+    com.footymanager.simulator.domain.model.CompetitionType.FRIENDLY -> "Friendly"
+    com.footymanager.simulator.domain.model.CompetitionType.LEAGUE -> "Matchday $matchday"
 }
 
 /** Pre-match difficulty readout based on relative reputation and form. */

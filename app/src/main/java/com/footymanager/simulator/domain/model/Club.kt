@@ -95,11 +95,26 @@ data class League(
             prizeMoneyPerPlace = 2_100_000L, tier = 1
         )
 
+        /**
+         * The Champions League is a continental competition, not a domestic
+         * division, so it is excluded from round-robin fixture generation and
+         * driven by [com.footymanager.simulator.domain.engine.ChampionsLeagueEngine].
+         */
+        val CHAMPIONS_LEAGUE = League(
+            id = "UCL", name = "Champions League", country = "Europe", reputation = 97,
+            relegationPlaces = 0, championsLeaguePlaces = 0,
+            prizeMoneyPerPlace = 0L, tier = 1
+        )
+
         val all: List<League> = listOf(
             PREMIER_LEAGUE, CHAMPIONSHIP, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1
         )
 
-        fun byId(id: String): League = all.firstOrNull { it.id == id } ?: PREMIER_LEAGUE
+        /** Leagues that play a domestic round-robin schedule. */
+        val domestic: List<League> = all
+
+        fun byId(id: String): League = all.firstOrNull { it.id == id }
+            ?: if (id == CHAMPIONS_LEAGUE.id) CHAMPIONS_LEAGUE else PREMIER_LEAGUE
     }
 }
 
@@ -155,13 +170,60 @@ data class Match(
     val awayGoals: Int = 0,
     val status: MatchStatus = MatchStatus.SCHEDULED,
     /** Set once the detailed simulation for this match has been generated. */
-    val resultId: Long? = null
+    val resultId: Long? = null,
+    /** Which competition this fixture belongs to. */
+    val competition: CompetitionType = CompetitionType.LEAGUE,
+    /** Real calendar date of the fixture, so the schedule is never random. */
+    val date: GameDate? = null,
+    /** Knockout tie this fixture belongs to, when applicable. */
+    val tieId: Long? = null,
+    /** Leg number within a two-legged tie (1 or 2). */
+    val leg: Int = 1,
+    /**
+     * Competition-specific round number: the UCL league-phase matchday (1..8)
+     * or the knockout round order. Zero for domestic league fixtures, whose
+     * round is already [matchday].
+     */
+    val competitionRound: Int = 0,
+    /** Extra time and shootout scores for knockout matches. */
+    val homeGoalsExtraTime: Int = 0,
+    val awayGoalsExtraTime: Int = 0,
+    val shootoutHome: Int? = null,
+    val shootoutAway: Int? = null
 ) {
     val isPlayed: Boolean get() = status == MatchStatus.PLAYED
+
+    val isKnockout: Boolean get() = competition == CompetitionType.CHAMPIONS_LEAGUE &&
+        tieId != null
+
+    val wentToExtraTime: Boolean
+        get() = homeGoalsExtraTime != 0 || awayGoalsExtraTime != 0
+
+    val wentToShootout: Boolean get() = shootoutHome != null && shootoutAway != null
 
     fun involves(clubId: Long): Boolean = homeClubId == clubId || awayClubId == clubId
 
     fun opponentOf(clubId: Long): Long = if (homeClubId == clubId) awayClubId else homeClubId
 
     fun isHomeFor(clubId: Long): Boolean = homeClubId == clubId
+
+    /** Goals scored by a club including extra time, but not the shootout. */
+    fun goalsFor(clubId: Long): Int {
+        val base = if (homeClubId == clubId) homeGoals else awayGoals
+        val et = if (homeClubId == clubId) homeGoalsExtraTime else awayGoalsExtraTime
+        return base + et
+    }
+
+    fun goalsAgainst(clubId: Long): Int {
+        val base = if (homeClubId == clubId) awayGoals else homeGoals
+        val et = if (homeClubId == clubId) awayGoalsExtraTime else homeGoalsExtraTime
+        return base + et
+    }
+
+    /** Human-readable competition label for the UI. */
+    val competitionLabel: String
+        get() = when (competition) {
+            CompetitionType.LEAGUE -> League.byId(leagueId).shortName
+            else -> competition.label
+        }
 }

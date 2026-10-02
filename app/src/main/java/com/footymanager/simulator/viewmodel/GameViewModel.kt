@@ -11,12 +11,17 @@ import com.footymanager.simulator.domain.data.SelectionHelper
 import com.footymanager.simulator.domain.data.SaveRepository
 import com.footymanager.simulator.domain.data.SettingsRepository
 import com.footymanager.simulator.domain.data.SettingsStore
+import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
 import com.footymanager.simulator.domain.engine.FinanceEngine
+import com.footymanager.simulator.domain.engine.PlannedSubstitution
 import com.footymanager.simulator.domain.engine.SeasonEngine
 import com.footymanager.simulator.domain.engine.SelectionRepair
+import com.footymanager.simulator.domain.engine.SponsorshipEngine
+import com.footymanager.simulator.domain.engine.StadiumEngine
 import com.footymanager.simulator.domain.engine.TransferEngine
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
+import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.Difficulty
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.GamePhase
@@ -25,10 +30,13 @@ import com.footymanager.simulator.domain.model.Match
 import com.footymanager.simulator.domain.model.MatchResult
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
+import com.footymanager.simulator.domain.model.SponsorOffer
 import com.footymanager.simulator.domain.model.Tactics
 import com.footymanager.simulator.domain.model.TeamSelection
 import com.footymanager.simulator.domain.model.TrainingFocus
 import com.footymanager.simulator.domain.model.TransferOffer
+import com.footymanager.simulator.ui.sound.SoundCue
+import com.footymanager.simulator.ui.sound.SoundManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
@@ -48,9 +56,19 @@ data class MatchDayState(
     val opponent: Club,
     val isHome: Boolean,
     val opponentFormationName: String,
-    val result: MatchResult? = null
+    val result: MatchResult? = null,
+    /** Substitutions the manager has queued for this match. */
+    val plannedSubstitutions: List<PlannedSubstitution> = emptyList(),
+    /** True once the first half has been played and the manager may make changes. */
+    val halfTimeReached: Boolean = false,
+    /** Remaining fixtures on the same matchday week that are still to be played. */
+    val pendingOtherFixtures: List<Match> = emptyList()
 ) {
     val isPlayed: Boolean get() = result != null
+
+    /** Clubs a player can still be brought on from the bench. */
+    fun availableBenchIds(squad: List<Player>): List<Long> =
+        squad.filter { it.isAvailable }.map { it.id }
 }
 
 /**
@@ -100,6 +118,15 @@ class GameViewModel(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    /** Lightweight synthesised sound effects, gated by the player's setting. */
+    val sound = SoundManager()
+
+    /** Reward state of the current career, for the rewarded-ad card. */
+    val adRewards: StateFlow<com.footymanager.simulator.domain.model.AdRewardState?>
+        get() = _adRewards.asStateFlow()
+    private val _adRewards =
+        MutableStateFlow<com.footymanager.simulator.domain.model.AdRewardState?>(null)
+
     /**
      * Serializes persistence. Rapid edits each queue a save, and without this
      * the writes race and an older snapshot can land last, losing the newest
@@ -135,10 +162,16 @@ class GameViewModel(
             }
         }
         viewModelScope.launch {
-            settingsRepository.settings.collect { _settings.value = it }
+            settingsRepository.settings.collect {
+                _settings.value = it
+                sound.enabled = it.soundEnabled
+            }
         }
         viewModelScope.launch {
             _hasSave.value = saveRepository.hasSave()
+        }
+        viewModelScope.launch {
+            _career.collect { _adRewards.value = it?.adRewards }
         }
     }
 
@@ -212,6 +245,17 @@ class GameViewModel(
     fun setDarkTheme(enabled: Boolean) = viewModelScope.launch { settingsRepository.setDarkTheme(enabled) }
     fun setDifficulty(difficulty: Difficulty) = viewModelScope.launch { settingsRepository.setDifficulty(difficulty) }
     fun setAnimationSpeed(speed: AnimationSpeed) = viewModelScope.launch { settingsRepository.setAnimationSpeed(speed) }
+
+    /** Plays a UI cue through the shared sound manager. */
+    fun playSound(cue: SoundCue) {
+        when (cue) {
+            SoundCue.CLICK -> sound.click()
+            SoundCue.SUCCESS -> sound.success()
+            SoundCue.FAILURE -> sound.failure()
+            SoundCue.GOAL -> sound.goal()
+            SoundCue.WHISTLE -> sound.whistle()
+        }
+    }
 
     // --------------------------------------------------------------- tactics
 
@@ -324,7 +368,13 @@ class GameViewModel(
     /** Prepares the match-day screen for the next fixture. */
     fun prepareNextMatch(): Boolean {
         val career = _career.value ?: return false
-        val match = career.nextMatch() ?: return false
+        // The user's own league defines the matchday; on a given matchday they
+        // may have one league fixture and, in some weeks, one European fixture.
+        val matchday = career.matchdayIndex + 1
+        val candidates = career.fixtures.filter {
+            !it.isPlayed && it.involves(career.userClubId) && it.matchday == matchday
+        }
+        val match = candidates.minByOrNull { it.competition.ordinal } ?: return false
         val opponentId = match.opponentOf(career.userClubId)
         val opponent = career.clubOrThrow(opponentId)
         val opponentTactics = SeasonEngine.tacticsFor(career, opponentId, match.matchday)
@@ -332,9 +382,34 @@ class GameViewModel(
             match = match,
             opponent = opponent,
             isHome = match.isHomeFor(career.userClubId),
-            opponentFormationName = opponentTactics.formation.name
+            opponentFormationName = opponentTactics.formation.name,
+            pendingOtherFixtures = candidates.filter { it.id != match.id }
         )
         return true
+    }
+
+    /** Queues a substitution to be applied at half time. */
+    fun planSubstitution(playerOffId: Long, playerOnId: Long) {
+        val matchDay = _matchDay.value ?: return
+        val existing = matchDay.plannedSubstitutions
+            .filterNot { it.playerOffId == playerOffId || it.playerOnId == playerOnId }
+        _matchDay.value = matchDay.copy(
+            plannedSubstitutions = existing + PlannedSubstitution(playerOffId, playerOnId, minute = 45)
+        )
+    }
+
+    /** Removes a queued substitution. */
+    fun cancelSubstitution(playerOnId: Long) {
+        val matchDay = _matchDay.value ?: return
+        _matchDay.value = matchDay.copy(
+            plannedSubstitutions = matchDay.plannedSubstitutions.filterNot { it.playerOnId == playerOnId }
+        )
+    }
+
+    /** Marks that the manager has reached half time and may make changes. */
+    fun reachHalfTime() {
+        val matchDay = _matchDay.value ?: return
+        if (!matchDay.halfTimeReached) _matchDay.value = matchDay.copy(halfTimeReached = true)
     }
 
     /**
@@ -362,15 +437,48 @@ class GameViewModel(
 
                 current = SeasonEngine.simulateOtherFixtures(current, random)
                 val (updated, result) = SeasonEngine.simulateFixture(
-                    current, matchDay.match, random, userMatch = true
+                    current,
+                    matchDay.match,
+                    random,
+                    userMatch = true,
+                    plannedSubstitutions = matchDay.plannedSubstitutions
                 )
                 updated to result
             }
             _career.value = outcome.first
-            _matchDay.value = matchDay.copy(result = outcome.second)
+            _matchDay.value = matchDay.copy(result = outcome.second, halfTimeReached = true)
             _isBusy.value = false
             persist(outcome.first)
             onComplete(outcome.second)
+        }
+    }
+
+    /**
+     * Plays any remaining fixtures in the same matchday week that are not the
+     * headline fixture, so a busy week (a league game plus a European tie) is
+     * fully resolved before the calendar advances.
+     */
+    fun finishMatchday() {
+        val career = _career.value ?: return
+        val matchDay = _matchDay.value ?: return
+        val remaining = matchDay.pendingOtherFixtures
+        if (remaining.isEmpty()) return
+
+        viewModelScope.launch {
+            _isBusy.value = true
+            val updated = withContext(Dispatchers.Default) {
+                var current = career
+                val random = rngFor(current)
+                for (fixture in remaining) {
+                    if (fixture.isPlayed) continue
+                    val (next, _) = SeasonEngine.simulateFixture(current, fixture, random, userMatch = true)
+                    current = next
+                }
+                current
+            }
+            _career.value = updated
+            _isBusy.value = false
+            persist(updated)
         }
     }
 
@@ -380,8 +488,29 @@ class GameViewModel(
         viewModelScope.launch {
             _isBusy.value = true
             val updated = withContext(Dispatchers.Default) {
-                var current = SeasonEngine.advanceWeek(career, rngFor(career))
+                var current = career
+                val random = rngFor(current)
+                val matchday = current.matchdayIndex + 1
+
+                // Any of the user's fixtures this matchday that have not yet been
+                // played (typically a European tie) are resolved now.
+                val leftover = current.fixtures.filter {
+                    !it.isPlayed && it.involves(current.userClubId) && it.matchday == matchday
+                }
+                for (fixture in leftover) {
+                    val (next, _) = SeasonEngine.simulateFixture(current, fixture, random, userMatch = true)
+                    current = next
+                }
+
+                // Ensure every other league and the rest of the European card has
+                // been played for this matchday before the calendar advances.
+                current = SeasonEngine.simulateOtherFixtures(current, random)
+                current = SeasonEngine.advanceWeek(current, random)
                 current = FinanceEngine.applyFinancialPressure(current)
+                // Progress the Champions League bracket once its rounds complete.
+                var idc = current.idCounter
+                current = ChampionsLeagueEngine.progress(current, random) { ++idc }
+                current = current.copy(idCounter = idc)
                 if (current.matchdayIndex >= current.totalMatchdays()) {
                     current = current.copy(phase = GamePhase.SEASON_ENDED)
                 }
@@ -485,6 +614,130 @@ class GameViewModel(
         _career.value?.pendingOffers?.filter { it.status == OfferStatus.PENDING || it.status == OfferStatus.REJECTED }
             ?: emptyList()
 
+    // --------------------------------------------------------------- stadium
+
+    /** Starts a stadium expansion, deducting the cost from the club balance. */
+    fun upgradeStadium(): String {
+        val career = _career.value ?: return "No active career"
+        val stadium = career.stadium
+        if (!stadium.canExpand) return "The stadium cannot be expanded further right now."
+        val (updated, cost) = StadiumEngine.beginExpansion(stadium)
+        if (cost <= 0) return "The stadium cannot be expanded further right now."
+        if (career.userClub.balance < cost) {
+            return "Not enough money: £${TransferEngine.formatMoney(cost)} needed."
+        }
+        updateCareer { c ->
+            var idc = c.idCounter
+            idc++
+            c.copy(
+                stadium = updated,
+                clubs = c.clubs.map {
+                    if (it.id == c.userClubId) it.copy(balance = it.balance - cost) else it
+                },
+                ledger = (c.ledger + com.footymanager.simulator.domain.model.FinanceLedgerEntry(
+                    id = idc,
+                    date = c.date,
+                    season = c.season,
+                    description = "Stadium expansion to ${"%,d".format(updated.expansionTargetCapacity)} seats",
+                    amount = -cost,
+                    category = com.footymanager.simulator.domain.model.LedgerCategory.STADIUM
+                )).takeLast(400),
+                idCounter = idc
+            )
+        }
+        return "Expansion started. It will be complete in ${com.footymanager.simulator.domain.model.Stadium.EXPANSION_WEEKS} weeks."
+    }
+
+    /** Sets the per-seat ticket price. */
+    fun setTicketPrice(price: Int) {
+        updateCareer { career ->
+            career.copy(stadium = career.stadium.copy(ticketPrice = price.coerceIn(5, 150)))
+        }
+    }
+
+    // ------------------------------------------------------------- sponsors
+
+    /** Signs a sponsorship offer for the current season. */
+    fun signSponsorship(offerId: Long): String {
+        val career = _career.value ?: return "No active career"
+        val offer = career.sponsorOffers.firstOrNull { it.id == offerId }
+            ?: return "That sponsorship offer is no longer available."
+        val sponsorship = SponsorshipEngine.sign(offer)
+        updateCareer { c ->
+            var idc = c.idCounter
+            idc++
+            c.copy(
+                sponsorship = sponsorship,
+                sponsorshipSeason = c.seasonNumber,
+                sponsorOffers = emptyList(),
+                clubs = c.clubs.map {
+                    if (it.id == c.userClubId) it.copy(balance = it.balance + offer.upfront) else it
+                },
+                ledger = (c.ledger + com.footymanager.simulator.domain.model.FinanceLedgerEntry(
+                    id = idc,
+                    date = c.date,
+                    season = c.season,
+                    description = "${offer.name} sponsorship (upfront)",
+                    amount = offer.upfront,
+                    category = com.footymanager.simulator.domain.model.LedgerCategory.SPONSORSHIP
+                )).takeLast(400),
+                news = (c.news + com.footymanager.simulator.domain.model.NewsItem(
+                    id = idc,
+                    category = com.footymanager.simulator.domain.model.NewsCategory.TRANSFER,
+                    headline = "${offer.name} becomes main sponsor",
+                    body = "${c.userClub.name} have signed a ${offer.tier.lowercase()} deal with ${offer.name} " +
+                        "worth £${TransferEngine.formatMoney(offer.upfront)} up front plus " +
+                        "£${TransferEngine.formatMoney(offer.seasonal)} across the season. " +
+                        "Bonus: ${offer.bonusCondition} (£${TransferEngine.formatMoney(offer.bonusAmount)}).",
+                    date = c.date,
+                    season = c.season,
+                    clubId = c.userClubId
+                )).takeLast(120),
+                idCounter = idc
+            )
+        }
+        return "Signed a deal with ${offer.name}."
+    }
+
+    // ------------------------------------------------------------ rewarded ads
+
+    /**
+     * Grants the reward for a successfully completed rewarded ad. The allowance
+     * resets once per calendar day and no reward is given once it is exhausted.
+     */
+    fun claimAdReward(epochDay: Long = System.currentTimeMillis() / 86_400_000L): Long {
+        val career = _career.value ?: return 0L
+        val (updated, reward) = career.adRewards.recordAd(epochDay)
+        if (reward <= 0L) return 0L
+        updateCareer { c ->
+            var idc = c.idCounter
+            idc++
+            c.copy(
+                adRewards = updated,
+                clubs = c.clubs.map {
+                    if (it.id == c.userClubId) it.copy(balance = it.balance + reward) else it
+                },
+                ledger = (c.ledger + com.footymanager.simulator.domain.model.FinanceLedgerEntry(
+                    id = idc,
+                    date = c.date,
+                    season = c.season,
+                    description = "Rewarded ad bonus",
+                    amount = reward,
+                    category = com.footymanager.simulator.domain.model.LedgerCategory.OTHER
+                )).takeLast(400),
+                idCounter = idc
+            )
+        }
+        return reward
+    }
+
+    /** Refreshes the ad allowance for a new day without granting anything. */
+    fun refreshAdAllowance(epochDay: Long = System.currentTimeMillis() / 86_400_000L) {
+        val career = _career.value ?: return
+        if (career.adRewards.allowanceDay == epochDay) return
+        updateCareer { c -> c.copy(adRewards = c.adRewards.withDay(epochDay)) }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private fun updateCareer(transform: (Career) -> Career) {
@@ -533,6 +786,7 @@ class GameViewModel(
             }
         }
         persistenceScope.cancel()
+        sound.release()
         super.onCleared()
     }
 }

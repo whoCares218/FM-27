@@ -1,18 +1,20 @@
 package com.footymanager.simulator.domain.data
 
+import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
+import com.footymanager.simulator.domain.engine.SponsorshipEngine
 import com.footymanager.simulator.domain.model.BoardObjective
 import com.footymanager.simulator.domain.model.BoardState
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.Difficulty
 import com.footymanager.simulator.domain.model.Formation
-import com.footymanager.simulator.domain.model.GameDate
 import com.footymanager.simulator.domain.model.GamePhase
 import com.footymanager.simulator.domain.model.League
 import com.footymanager.simulator.domain.model.NewsCategory
 import com.footymanager.simulator.domain.model.NewsItem
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.Position
+import com.footymanager.simulator.domain.model.Stadium
 import com.footymanager.simulator.domain.model.TableRow
 import com.footymanager.simulator.domain.model.Tactics
 import com.footymanager.simulator.domain.model.TeamSelection
@@ -24,9 +26,6 @@ import kotlin.random.Random
  * league table, an initial starting XI and the board's season objectives.
  */
 object CareerFactory {
-
-    /** The season always begins here so the calendar is deterministic. */
-    private val SEASON_START = GameDate(2026, 8, 8)
 
     data class NewCareerRequest(
         val managerName: String,
@@ -54,14 +53,40 @@ object CareerFactory {
 
         val fixtures = mutableListOf<com.footymanager.simulator.domain.model.Match>()
         val table = mutableMapOf<String, List<TableRow>>()
-        for (league in League.all) {
+        for (league in League.domestic) {
             val leagueClubs = clubs.filter { it.leagueId == league.id }
             if (leagueClubs.isEmpty()) continue
             fixtures += FixtureGenerator.generateLeagueFixtures(league, leagueClubs, random, idProvider)
             table[league.id] = leagueClubs.map { TableRow(clubId = it.id) }
         }
 
+        // ---- Champions League (current 36-team league-phase format) ----
         val userClub = clubs.first { it.id == request.clubId }
+        val baseCareer = Career(
+            saveId = "seed",
+            managerName = request.managerName,
+            userClubId = userClub.id,
+            season = Career.CURRENT_SEASON,
+            seasonNumber = 1,
+            difficulty = request.difficulty,
+            date = SeasonCalendar.SEASON_START,
+            clubs = clubs,
+            players = emptyList(),
+            fixtures = emptyList(),
+            table = emptyMap()
+        )
+        val (uclState, uclFixtures) = ChampionsLeagueEngine.createSeason(
+            career = baseCareer,
+            season = Career.CURRENT_SEASON,
+            startDate = SeasonCalendar.SEASON_START,
+            random = random,
+            idProvider = idProvider
+        )
+        fixtures += uclFixtures
+
+        // Every fixture gets a real calendar date.
+        val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
+
         val userSquad = players.filter { it.clubId == userClub.id }
         val tactics = Tactics(formationId = userClub.formationId)
         val selection = SelectionHelper.autoPickBest(
@@ -70,6 +95,8 @@ object CareerFactory {
         )
 
         val board = buildInitialBoard(userClub, request.difficulty)
+        val stadium = Stadium.initial(userClub.stadiumName, userClub.stadiumCapacity, userClub.reputation)
+        val sponsorOffers = SponsorshipEngine.generateOffers(userClub, random)
 
         val news = mutableListOf(
             NewsItem(
@@ -78,7 +105,7 @@ object CareerFactory {
                 headline = "${request.managerName} appointed at ${userClub.name}",
                 body = "The board has confirmed the appointment of ${request.managerName} as first-team manager. " +
                     "Season objective: ${userClub.boardExpectation}.",
-                date = SEASON_START,
+                date = SeasonCalendar.SEASON_START,
                 season = Career.CURRENT_SEASON,
                 clubId = userClub.id
             ),
@@ -87,8 +114,18 @@ object CareerFactory {
                 category = NewsCategory.TRANSFER_WINDOW,
                 headline = "Summer transfer window open",
                 body = "Clubs may now buy and sell players. The window closes after matchday 3.",
-                date = SEASON_START,
+                date = SeasonCalendar.SEASON_START,
                 season = Career.CURRENT_SEASON
+            ),
+            NewsItem(
+                id = idProvider(),
+                category = NewsCategory.GENERAL,
+                headline = "Sponsorship offers on the table",
+                body = "The board has received sponsorship offers for the ${Career.CURRENT_SEASON} season. " +
+                    "Choose one from the Sponsors screen.",
+                date = SeasonCalendar.SEASON_START,
+                season = Career.CURRENT_SEASON,
+                clubId = userClub.id
             )
         )
 
@@ -99,21 +136,24 @@ object CareerFactory {
             season = Career.CURRENT_SEASON,
             seasonNumber = 1,
             difficulty = request.difficulty,
-            date = SEASON_START,
+            date = SeasonCalendar.SEASON_START,
             phase = GamePhase.IN_SEASON,
             matchdayIndex = 0,
             tactics = tactics,
             selection = selection,
             clubs = clubs,
             players = players,
-            fixtures = fixtures,
+            fixtures = datedFixtures,
             table = table,
             news = news,
             board = board,
             transferWindow = TransferWindowState(),
             idCounter = idCounter,
             createdAtEpochMs = System.currentTimeMillis(),
-            lastSavedEpochMs = System.currentTimeMillis()
+            lastSavedEpochMs = System.currentTimeMillis(),
+            stadium = stadium,
+            sponsorOffers = sponsorOffers,
+            championsLeague = uclState
         )
     }
 

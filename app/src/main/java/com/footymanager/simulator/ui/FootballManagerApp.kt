@@ -52,6 +52,7 @@ import com.footymanager.simulator.ui.screens.MoreScreen
 import com.footymanager.simulator.ui.screens.NewCareerScreen
 import com.footymanager.simulator.ui.screens.NewsScreen
 import com.footymanager.simulator.ui.screens.PlayerDetailScreen
+import com.footymanager.simulator.ui.screens.RewardsScreen
 import com.footymanager.simulator.ui.screens.SeasonSummaryScreen
 import com.footymanager.simulator.ui.screens.SettingsScreen
 import com.footymanager.simulator.ui.screens.SquadScreen
@@ -59,6 +60,7 @@ import com.footymanager.simulator.ui.screens.StatisticsScreen
 import com.footymanager.simulator.ui.screens.TacticsScreen
 import com.footymanager.simulator.ui.screens.TrainingScreen
 import com.footymanager.simulator.ui.screens.TransfersScreen
+import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.theme.FootballManagerTheme
 import com.footymanager.simulator.viewmodel.GameViewModel
 
@@ -82,6 +84,16 @@ fun FootballManagerApp(viewModel: GameViewModel) {
                 snackbarHostState.showSnackbar(it)
                 viewModel.clearMessage()
             }
+        }
+
+        // Match-day audio: a whistle when the match is prepared, then a goal chime
+        // once the result arrives with goals on the board.
+        LaunchedEffect(matchDay?.match?.id) {
+            if (matchDay != null) viewModel.playSound(SoundCue.WHISTLE)
+        }
+        LaunchedEffect(matchDay?.result) {
+            val result = matchDay?.result ?: return@LaunchedEffect
+            if (result.homeGoals + result.awayGoals > 0) viewModel.playSound(SoundCue.GOAL)
         }
 
         val backStackEntry by navController.currentBackStackEntryAsState()
@@ -108,6 +120,7 @@ fun FootballManagerApp(viewModel: GameViewModel) {
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = {
+                                    viewModel.playSound(SoundCue.CLICK)
                                     if (!selected) {
                                         navController.navigate(tab.route) {
                                             popUpTo(Routes.HOME) { saveState = true }
@@ -348,6 +361,42 @@ private fun AppNavHost(
             if (career != null) FixturesScreen(career = career)
         }
 
+        composable(Routes.CHAMPIONS_LEAGUE) {
+            if (career != null) {
+                com.footymanager.simulator.ui.screens.ChampionsLeagueScreen(career = career)
+            }
+        }
+
+        composable(Routes.STADIUM) {
+            if (career != null) {
+                com.footymanager.simulator.ui.screens.StadiumScreen(
+                    career = career,
+                    onSetTicketPrice = { viewModel.setTicketPrice(it) },
+                    onExpand = { viewModel.upgradeStadium() }
+                )
+            }
+        }
+
+        composable(Routes.SPONSORS) {
+            if (career != null) {
+                com.footymanager.simulator.ui.screens.SponsorsScreen(
+                    career = career,
+                    onSign = { viewModel.signSponsorship(it) }
+                )
+            }
+        }
+
+        composable(Routes.REWARDS) {
+            val rewards = viewModel.adRewards.collectAsStateWithLifecycle().value
+            if (career != null && rewards != null) {
+                RewardsScreen(
+                    state = rewards,
+                    onBack = { navController.popBackStack() },
+                    onClaim = { viewModel.claimAdReward(it) }
+                )
+            }
+        }
+
         composable(Routes.FINANCES) {
             if (career != null) FinancesScreen(career = career)
         }
@@ -418,6 +467,8 @@ private fun AppNavHost(
                         navController.popBackStack()
                     },
                     onPlay = { viewModel.playMatch() },
+                    onPlanSub = { off, on -> viewModel.planSubstitution(off, on) },
+                    onCancelSub = { viewModel.cancelSubstitution(it) },
                     onContinue = {
                         viewModel.advanceAfterMatch()
                         navController.navigate(Routes.HOME) {

@@ -1,8 +1,11 @@
 package com.footymanager.simulator.domain.engine
 
+import com.footymanager.simulator.domain.data.SeasonCalendar
 import com.footymanager.simulator.domain.data.SelectionHelper
 import com.footymanager.simulator.domain.model.BoardObjective
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.ChampionsLeagueState
+import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.FinanceLedgerEntry
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.LedgerCategory
@@ -38,7 +41,8 @@ object SeasonEngine {
         career: Career,
         match: Match,
         random: Random,
-        userMatch: Boolean
+        userMatch: Boolean,
+        plannedSubstitutions: List<PlannedSubstitution> = emptyList()
     ): Pair<Career, MatchResult> {
         val homeClub = career.clubOrThrow(match.homeClubId)
         val awayClub = career.clubOrThrow(match.awayClubId)
@@ -48,6 +52,10 @@ object SeasonEngine {
         val homeTactics = tacticsFor(career, homeClub.id, match.matchday)
         val awayTactics = tacticsFor(career, awayClub.id, match.matchday)
 
+        // Scripted substitutions only apply to the user's club.
+        val homeIsUser = homeClub.id == career.userClubId
+        val awayIsUser = awayClub.id == career.userClubId
+
         val homeInput = MatchTeamInput(
             clubId = homeClub.id,
             clubName = homeClub.name,
@@ -55,7 +63,8 @@ object SeasonEngine {
             tactics = homeTactics,
             selection = homeSelection,
             squadById = career.players.filter { it.clubId == homeClub.id }.associateBy { it.id },
-            strengthMultiplier = aiMultiplier(career, homeClub.id)
+            strengthMultiplier = aiMultiplier(career, homeClub.id),
+            plannedSubstitutions = if (homeIsUser) plannedSubstitutions else emptyList()
         )
         val awayInput = MatchTeamInput(
             clubId = awayClub.id,
@@ -64,7 +73,8 @@ object SeasonEngine {
             tactics = awayTactics,
             selection = awaySelection,
             squadById = career.players.filter { it.clubId == awayClub.id }.associateBy { it.id },
-            strengthMultiplier = aiMultiplier(career, awayClub.id)
+            strengthMultiplier = aiMultiplier(career, awayClub.id),
+            plannedSubstitutions = if (awayIsUser) plannedSubstitutions else emptyList()
         )
 
         val determinism = when (career.difficulty) {
@@ -73,7 +83,14 @@ object SeasonEngine {
             com.footymanager.simulator.domain.model.Difficulty.HARD -> 0.85
         }
 
-        val sim = MatchEngine.simulate(homeInput, awayInput, random, homeAdvantage = true, determinism = determinism)
+        val sim = MatchEngine.simulate(
+            homeInput,
+            awayInput,
+            random,
+            homeAdvantage = true,
+            determinism = determinism,
+            rules = if (match.isKnockout) MatchRules.KNOCKOUT else MatchRules.LEAGUE
+        )
 
         val result = MatchResult(
             matchId = match.id,
@@ -87,7 +104,12 @@ object SeasonEngine {
             awayStats = sim.awayStats,
             events = sim.events,
             playerRatings = sim.ratings,
-            playerOfTheMatchId = sim.playerOfTheMatchId
+            playerOfTheMatchId = sim.playerOfTheMatchId,
+            penaltyShootoutHome = sim.shootoutHome,
+            penaltyShootoutAway = sim.shootoutAway,
+            momentum = sim.momentum,
+            extraTime = sim.shootoutHome != null || sim.homeStats.goals > sim.homeGoals ||
+                sim.awayStats.goals > sim.awayGoals
         )
 
         val updated = applyResultToCareer(career, match, result, random, userMatch)
@@ -106,23 +128,29 @@ object SeasonEngine {
         val updatedFixtures = career.fixtures.map { m ->
             if (m.id == match.id) {
                 m.copy(
-                    homeGoals = result.homeGoals,
-                    awayGoals = result.awayGoals,
+                    homeGoals = result.homeGoals - (result.homeStats.goals - result.homeGoals),
+                    awayGoals = result.awayGoals - (result.awayStats.goals - result.awayGoals),
+                    homeGoalsExtraTime = result.homeStats.goals - result.homeGoals,
+                    awayGoalsExtraTime = result.awayStats.goals - result.awayGoals,
+                    shootoutHome = result.penaltyShootoutHome,
+                    shootoutAway = result.penaltyShootoutAway,
                     status = MatchStatus.PLAYED,
                     resultId = match.id
                 )
             } else m
         }
 
-        // ---- League table ----
+        // ---- League table (domestic leagues only; the UCL table is separate) ----
         val table = career.table.toMutableMap()
-        val rows = table[match.leagueId]?.toMutableList()
-        if (rows != null) {
-            val homeIdx = rows.indexOfFirst { it.clubId == match.homeClubId }
-            val awayIdx = rows.indexOfFirst { it.clubId == match.awayClubId }
-            if (homeIdx >= 0) rows[homeIdx] = rows[homeIdx].applyResult(result.homeGoals, result.awayGoals)
-            if (awayIdx >= 0) rows[awayIdx] = rows[awayIdx].applyResult(result.awayGoals, result.homeGoals)
-            table[match.leagueId] = rows
+        if (match.competition == CompetitionType.LEAGUE) {
+            val rows = table[match.leagueId]?.toMutableList()
+            if (rows != null) {
+                val homeIdx = rows.indexOfFirst { it.clubId == match.homeClubId }
+                val awayIdx = rows.indexOfFirst { it.clubId == match.awayClubId }
+                if (homeIdx >= 0) rows[homeIdx] = rows[homeIdx].applyResult(result.homeGoals, result.awayGoals)
+                if (awayIdx >= 0) rows[awayIdx] = rows[awayIdx].applyResult(result.awayGoals, result.homeGoals)
+                table[match.leagueId] = rows
+            }
         }
 
         // ---- Player statistics, condition, cards and injuries ----
@@ -153,6 +181,7 @@ object SeasonEngine {
         var board = career.board
         var ledger = career.ledger
         var idCounter = career.idCounter
+        var stadium = career.stadium
 
         val isUserFixture = match.involves(career.userClubId)
         if (isUserFixture) {
@@ -193,11 +222,31 @@ object SeasonEngine {
                 clubId = career.userClubId
             )
 
-            // Matchday revenue.
-            val attendance = matchdayAttendance(career, match, random)
-            val ticketPrice = 26.0 + career.userClub.reputation * 0.42
-            val revenue = (attendance * ticketPrice).toLong()
-            if (revenue > 0) {
+            // Matchday revenue (home fixtures only) and stadium attendance.
+            if (userIsHome) {
+                val ppg = AiManager.recentPointsPerGame(
+                    career.fixtures.filter { it.isPlayed && it.involves(career.userClubId) },
+                    career.userClubId
+                )
+                val attendance = StadiumEngine.attendance(
+                    stadium = career.stadium,
+                    reputation = career.userClub.reputation,
+                    opponentReputation = opponent.reputation,
+                    recentPointsPerGame = ppg,
+                    random = random
+                )
+                val revenue = StadiumEngine.matchdayIncome(attendance, career.stadium.ticketPrice)
+                val expenses = StadiumEngine.matchdayExpenses(career.stadium, attendance)
+                val playedHome = career.fixtures.count {
+                    it.isPlayed && it.homeClubId == career.userClubId
+                }
+                stadium = career.stadium.copy(
+                    lastAttendance = attendance,
+                    averageAttendance = StadiumEngine.updatedAverage(
+                        career.stadium.averageAttendance, attendance, playedHome
+                    ),
+                    totalMatchdayIncome = career.stadium.totalMatchdayIncome + revenue
+                )
                 idCounter++
                 ledger = ledger + FinanceLedgerEntry(
                     id = idCounter,
@@ -206,6 +255,15 @@ object SeasonEngine {
                     description = "Matchday revenue vs ${opponent.name} (${"%,d".format(attendance)} fans)",
                     amount = revenue,
                     category = LedgerCategory.MATCHDAY
+                )
+                idCounter++
+                ledger = ledger + FinanceLedgerEntry(
+                    id = idCounter,
+                    date = career.date,
+                    season = career.season,
+                    description = "Matchday costs vs ${opponent.name}",
+                    amount = -expenses,
+                    category = LedgerCategory.STADIUM
                 )
             }
 
@@ -261,15 +319,21 @@ object SeasonEngine {
             news = news.takeLast(120),
             board = board,
             ledger = ledger.takeLast(400),
-            idCounter = idCounter
+            idCounter = idCounter,
+            stadium = stadium
         )
 
+        // ---- Champions League: update the league-phase table ----
+        val withUcl = if (match.competition == CompetitionType.CHAMPIONS_LEAGUE && match.tieId == null) {
+            withLedger.copy(championsLeague = ChampionsLeagueEngine.applyLeagueResult(withLedger.championsLeague, match))
+        } else withLedger
+
         // ---- Finances: wages are paid weekly ----
-        return FinanceEngine.payWeeklyWages(withLedger, idCounter)
+        return FinanceEngine.payWeeklyWages(withUcl, idCounter)
     }
 
     private fun styleFatigue(career: Career, clubId: Long, fallback: Double): Double =
-        if (clubId == career.userClubId) career.tactics.style.fatigueBias else fallback
+        if (clubId == career.userClubId) career.tactics.fatigueMultiplier else fallback
 
     private fun applyPlayerOutcome(
         player: Player,
@@ -342,14 +406,6 @@ object SeasonEngine {
         return chance
     }
 
-    private fun matchdayAttendance(career: Career, match: Match, random: Random): Int {
-        val home = career.clubOrThrow(match.homeClubId)
-        val away = career.clubOrThrow(match.awayClubId)
-        val attractiveness = (home.reputation + away.reputation) / 2.0
-        val fill = (0.62 + attractiveness / 260.0 + random.nextDouble(-0.07, 0.07)).coerceIn(0.45, 0.99)
-        return (home.stadiumCapacity * fill).toInt()
-    }
-
     // ------------------------------------------------------------ selections
 
     /** The XI for a club in a given matchday, using the user's picks where relevant. */
@@ -385,17 +441,57 @@ object SeasonEngine {
     fun simulateOtherFixtures(career: Career, random: Random): Career {
         var current = career
         val matchday = career.matchdayIndex + 1
+
+        // Every domestic league plays on the same round, so results across all
+        // divisions must be simulated together to keep the world consistent.
         val pending = career.fixtures.filter {
-            it.matchday == matchday &&
+            it.competition == CompetitionType.LEAGUE &&
+                it.matchday == matchday &&
                 !it.isPlayed &&
-                it.leagueId == career.userLeagueId &&
                 !it.involves(career.userClubId)
         }
         for (match in pending) {
             val (updated, _) = simulateFixture(current, match, random, userMatch = false)
             current = updated
         }
+
+        // A Champions League matchday shares this domestic round, so every
+        // European fixture must be played at the same time to keep the table and
+        // the bracket consistent.
+        val uclRound = uclMatchdayForRound(matchday)
+        if (uclRound != null) {
+            val uclPending = current.fixtures.filter {
+                it.competition == CompetitionType.CHAMPIONS_LEAGUE &&
+                    it.competitionRound == uclRound &&
+                    it.tieId == null &&
+                    !it.isPlayed
+            }
+            for (match in uclPending) {
+                val (updated, _) = simulateFixture(current, match, random, userMatch = false)
+                current = updated
+            }
+        }
+
+        // Knockout legs are scheduled on their own matchdays and involve AI clubs
+        // that may still be alive in the competition.
+        val knockoutPending = current.fixtures.filter {
+            it.competition == CompetitionType.CHAMPIONS_LEAGUE &&
+                it.tieId != null &&
+                it.matchday == matchday &&
+                !it.isPlayed &&
+                !it.involves(career.userClubId)
+        }
+        for (match in knockoutPending) {
+            val (updated, _) = simulateFixture(current, match, random, userMatch = false)
+            current = updated
+        }
         return current
+    }
+
+    /** Maps a domestic round onto the UCL league-phase matchday it hosts, if any. */
+    fun uclMatchdayForRound(domesticRound: Int): Int? {
+        val idx = SeasonCalendar.uclRoundSchedule.indexOf(domesticRound)
+        return if (idx >= 0) idx + 1 else null
     }
 
     /**
@@ -478,10 +574,98 @@ object SeasonEngine {
             idCounter = idCounter
         )
 
+        // ---- Champions League matchday ticks forward on its designated rounds ----
+        val playedRound = career.matchdayIndex + 1
+        val uclPlayed = uclMatchdayForRound(playedRound)
+        if (uclPlayed != null && updated.championsLeague.active) {
+            updated = updated.copy(
+                championsLeague = updated.championsLeague.copy(
+                    currentMatchday = (uclPlayed + 1).coerceAtMost(
+                        ChampionsLeagueState.LEAGUE_PHASE_MATCHDAYS + 1
+                    )
+                )
+            )
+        }
+
+        // ---- Stadium expansion, sponsorship income and fan mood ----
+        updated = weeklyClubOperations(updated, random)
+
         // AI clubs trade with each other during open windows.
         updated = TransferEngine.runAiTransferActivity(updated, random)
 
         return updated
+    }
+
+    /**
+     * The weekly club-housekeeping pass: an in-progress stadium expansion
+     * advances, the sponsorship pays its instalment, and fan satisfaction drifts
+     * in response to results and ticket pricing.
+     */
+    private fun weeklyClubOperations(career: Career, random: Random): Career {
+        var idCounter = career.idCounter
+        var ledger = career.ledger
+        var news = career.news
+
+        // ---- Stadium expansion ----
+        var stadium = career.stadium
+        if (stadium.expansionWeeksRemaining > 0) {
+            val before = stadium
+            stadium = StadiumEngine.progressExpansion(stadium)
+            if (before.expansionWeeksRemaining > 0 && stadium.expansionWeeksRemaining == 0) {
+                idCounter++
+                news = news + NewsItem(
+                    id = idCounter,
+                    category = NewsCategory.GENERAL,
+                    headline = "Stadium expansion complete",
+                    body = "${stadium.name} has been expanded to a capacity of " +
+                        "${"%,d".format(stadium.capacity)}.",
+                    date = career.date,
+                    season = career.season,
+                    clubId = career.userClubId
+                )
+            }
+        }
+
+        // ---- Sponsorship weekly instalment ----
+        val sponsorship = career.sponsorship
+        if (sponsorship != null && sponsorship.weeklyInstalment > 0) {
+            idCounter++
+            ledger = ledger + FinanceLedgerEntry(
+                id = idCounter,
+                date = career.date,
+                season = career.season,
+                description = "${sponsorship.name} sponsorship instalment",
+                amount = sponsorship.weeklyInstalment,
+                category = LedgerCategory.SPONSORSHIP
+            )
+        }
+
+        // ---- Fan satisfaction ----
+        val ppg = AiManager.recentPointsPerGame(
+            career.fixtures.filter { it.isPlayed && it.involves(career.userClubId) },
+            career.userClubId
+        )
+        val satisfaction = StadiumEngine.fanSatisfaction(
+            current = career.board.confidence.coerceIn(0, 100),
+            stadium = stadium,
+            reputation = career.userClub.reputation,
+            recentPointsPerGame = ppg,
+            random = random
+        )
+
+        val updatedClubs = career.clubs.map {
+            if (it.id == career.userClubId) it.copy(balance = it.balance + (sponsorship?.weeklyInstalment ?: 0L))
+            else it
+        }
+
+        return career.copy(
+            stadium = stadium,
+            clubs = updatedClubs,
+            ledger = ledger.takeLast(400),
+            news = news.takeLast(120),
+            idCounter = idCounter,
+            board = career.board.copy(confidence = satisfaction.coerceIn(career.board.confidence - 3, career.board.confidence + 3))
+        )
     }
 
     private fun contractMoraleAdjust(player: Player): Double {
@@ -620,11 +804,18 @@ object SeasonEngine {
         // ---- New season ----
         val nextSeasonNumber = career.seasonNumber + 1
         val nextSeasonLabel = SeasonLabel.forNumber(nextSeasonNumber)
-        val newStartDate = career.date.plusDays(45)
+        val newStartDate = SeasonCalendar.SEASON_START.plusDays(
+            (nextSeasonNumber - 1) * 364
+        )
+
+        // Retain last season's finishing positions for European qualification.
+        val previousStandings = career.table.mapValues { (_, rows) ->
+            rows.sortedWith(TableRow.comparator).map { it.clubId }
+        }
 
         val fixtures = mutableListOf<Match>()
         val table = mutableMapOf<String, List<TableRow>>()
-        for (lg in League.all) {
+        for (lg in League.domestic) {
             val leagueClubs = promotedRelegatedClubs.filter { it.leagueId == lg.id }
             if (leagueClubs.isEmpty()) continue
             fixtures += com.footymanager.simulator.domain.data.FixtureGenerator.generateLeagueFixtures(
@@ -641,6 +832,56 @@ object SeasonEngine {
         val userClub = refreshedClubs.first { it.id == career.userClubId }
         val userSquad = retainedPlayers.filter { it.clubId == userClub.id }
         val newSelection = SelectionHelper.autoPickBest(userSquad, Formation.byId(career.tactics.formationId))
+
+        // ---- Sponsorship: pay any bonus, then offer a fresh set of deals ----
+        val previousSponsorship = career.sponsorship
+        if (previousSponsorship != null) {
+            val bonus = if (SponsorshipEngine.bonusEarned(previousSponsorship.bonusCondition, position)) {
+                previousSponsorship.bonusAmount
+            } else 0L
+            if (bonus > 0) {
+                idCounter++
+                ledger = ledger + FinanceLedgerEntry(
+                    id = idCounter,
+                    date = career.date,
+                    season = career.season,
+                    description = "${previousSponsorship.name} bonus (${previousSponsorship.bonusCondition})",
+                    amount = bonus,
+                    category = LedgerCategory.SPONSORSHIP
+                )
+                idCounter++
+                news = news + NewsItem(
+                    id = idCounter,
+                    category = NewsCategory.BOARD,
+                    headline = "Sponsorship bonus earned",
+                    body = "${previousSponsorship.name} have paid a " +
+                        "£${"%,d".format(bonus)} bonus after ${previousSponsorship.bonusCondition.lowercase()}.",
+                    date = career.date,
+                    season = career.season,
+                    clubId = userClub.id
+                )
+            }
+        }
+        val newSponsorOffers = SponsorshipEngine.generateOffers(userClub, random)
+
+        // ---- Champions League for the new season ----
+        val seedCareer = career.copy(
+            season = nextSeasonLabel,
+            seasonNumber = nextSeasonNumber,
+            clubs = refreshedClubs,
+            lastStandings = previousStandings,
+            championsLeague = ChampionsLeagueState(season = nextSeasonLabel, active = false)
+        )
+        val (uclState, uclFixtures) = ChampionsLeagueEngine.createSeason(
+            career = seedCareer,
+            season = nextSeasonLabel,
+            startDate = newStartDate,
+            random = random,
+            idProvider = { ++idCounter }
+        )
+        fixtures += uclFixtures
+
+        val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
 
         // Rebuild the board objectives for the new campaign.
         val newBoard = career.board.copy(
@@ -681,7 +922,7 @@ object SeasonEngine {
             matchdayIndex = 0,
             clubs = refreshedClubs,
             players = retainedPlayers,
-            fixtures = fixtures,
+            fixtures = datedFixtures,
             table = table,
             results = emptyList(),
             news = news.takeLast(120),
@@ -693,7 +934,13 @@ object SeasonEngine {
             awards = emptyList(),
             transferSpendThisSeason = 0L,
             transferIncomeThisSeason = 0L,
-            idCounter = idCounter
+            idCounter = idCounter,
+            championsLeague = uclState,
+            lastStandings = previousStandings,
+            sponsorOffers = newSponsorOffers,
+            sponsorship = null,
+            sponsorshipSeason = 0,
+            stadium = StadiumEngine.progressExpansion(career.stadium)
         )
     }
 

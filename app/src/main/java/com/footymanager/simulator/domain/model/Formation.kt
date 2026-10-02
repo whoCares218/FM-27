@@ -200,7 +200,105 @@ data class Formation(
             description = "Low block with five defenders: hard to break down, reliant on the counter."
         )
 
-        val all: List<Formation> = listOf(F433, F4231, F442, F352, F343, F532)
+        val F4141 = Formation(
+            id = "4-1-4-1",
+            name = "4-1-4-1",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LB, SlotRole.LCB, SlotRole.RCB, SlotRole.RB,
+                SlotRole.CDM,
+                SlotRole.LM, SlotRole.LCM, SlotRole.RCM, SlotRole.RM,
+                SlotRole.ST
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.14f, 0.26f), pt(0.36f, 0.20f), pt(0.64f, 0.20f), pt(0.86f, 0.26f),
+                pt(0.50f, 0.42f),
+                pt(0.12f, 0.62f), pt(0.38f, 0.58f), pt(0.62f, 0.58f), pt(0.88f, 0.62f),
+                pt(0.50f, 0.86f)
+            ),
+            description = "A lone striker with a bank of four and a screening midfielder."
+        )
+
+        val F4411 = Formation(
+            id = "4-4-1-1",
+            name = "4-4-1-1",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LB, SlotRole.LCB, SlotRole.RCB, SlotRole.RB,
+                SlotRole.LM, SlotRole.LCM, SlotRole.RCM, SlotRole.RM,
+                SlotRole.CAM, SlotRole.ST
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.14f, 0.26f), pt(0.36f, 0.20f), pt(0.64f, 0.20f), pt(0.86f, 0.26f),
+                pt(0.12f, 0.52f), pt(0.38f, 0.48f), pt(0.62f, 0.48f), pt(0.88f, 0.52f),
+                pt(0.50f, 0.70f), pt(0.50f, 0.88f)
+            ),
+            description = "Two banks of four behind a withdrawn forward supporting the striker."
+        )
+
+        val F4222 = Formation(
+            id = "4-2-2-2",
+            name = "4-2-2-2",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LB, SlotRole.LCB, SlotRole.RCB, SlotRole.RB,
+                SlotRole.CDM, SlotRole.CM,
+                SlotRole.LW, SlotRole.RW,
+                SlotRole.LST, SlotRole.RST
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.14f, 0.26f), pt(0.36f, 0.20f), pt(0.64f, 0.20f), pt(0.86f, 0.26f),
+                pt(0.38f, 0.44f), pt(0.62f, 0.44f),
+                pt(0.26f, 0.66f), pt(0.74f, 0.66f),
+                pt(0.38f, 0.86f), pt(0.62f, 0.86f)
+            ),
+            description = "The 'magic square': a double pivot, two narrow creators and two strikers."
+        )
+
+        val F541 = Formation(
+            id = "5-4-1",
+            name = "5-4-1",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LWB, SlotRole.LCB, SlotRole.CB, SlotRole.RCB, SlotRole.RWB,
+                SlotRole.LM, SlotRole.LCM, SlotRole.RCM, SlotRole.RM,
+                SlotRole.ST
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.08f, 0.34f), pt(0.30f, 0.20f), pt(0.50f, 0.17f), pt(0.70f, 0.20f), pt(0.92f, 0.34f),
+                pt(0.14f, 0.56f), pt(0.38f, 0.52f), pt(0.62f, 0.52f), pt(0.86f, 0.56f),
+                pt(0.50f, 0.84f)
+            ),
+            description = "Ultra-defensive five across the back with a single outlet up front."
+        )
+
+        val F4312 = Formation(
+            id = "4-3-1-2",
+            name = "4-3-1-2",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LB, SlotRole.LCB, SlotRole.RCB, SlotRole.RB,
+                SlotRole.CDM, SlotRole.LCM, SlotRole.RCM,
+                SlotRole.CAM,
+                SlotRole.LST, SlotRole.RST
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.14f, 0.26f), pt(0.36f, 0.20f), pt(0.64f, 0.20f), pt(0.86f, 0.26f),
+                pt(0.50f, 0.42f), pt(0.30f, 0.54f), pt(0.70f, 0.54f),
+                pt(0.50f, 0.68f),
+                pt(0.38f, 0.86f), pt(0.62f, 0.86f)
+            ),
+            description = "Narrow midfield diamond behind a front two; width comes from the full backs."
+        )
+
+        val all: List<Formation> = listOf(
+            F433, F4231, F442, F352, F343, F532, F4141, F4411, F4222, F541, F4312
+        )
 
         fun byId(id: String): Formation = all.firstOrNull { it.id == id } ?: F4231
     }

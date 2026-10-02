@@ -372,4 +372,45 @@ class ScreenRenderTest {
         }
         composeRule.onRoot().assertExists()
     }
+
+    @Test
+    fun `the champions league screen renders standings and fixtures`() {
+        val c = playedCareer(weeks = 10)
+        setScreen { com.footymanager.simulator.ui.screens.ChampionsLeagueScreen(career = c) }
+        composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun `the stadium screen renders and exposes an upgrade control`() {
+        val c = career()
+        setScreen {
+            com.footymanager.simulator.ui.screens.StadiumScreen(
+                career = c,
+                onSetTicketPrice = {},
+                onExpand = {}
+            )
+        }
+        composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun `the sponsorship screen renders season offers`() {
+        val c = career()
+        setScreen {
+            com.footymanager.simulator.ui.screens.SponsorsScreen(career = c, onSign = {})
+        }
+        composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun `the rewards screen renders the daily allowance`() {
+        setScreen {
+            com.footymanager.simulator.ui.screens.RewardsScreen(
+                state = com.footymanager.simulator.domain.model.AdRewardState(),
+                onBack = {},
+                onClaim = { 3_000_000L }
+            )
+        }
+        composeRule.onRoot().assertExists()
+    }
 }

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,7 +81,9 @@ fun MatchDayScreen(
     animationMultiplier: Float,
     onBack: () -> Unit,
     onPlay: () -> Unit,
-    onContinue: () -> Unit
+    onContinue: () -> Unit,
+    onPlanSub: (playerOffId: Long, playerOnId: Long) -> Unit = { _, _ -> },
+    onCancelSub: (playerOnId: Long) -> Unit = {}
 ) {
     val isPlayed = matchDay.isPlayed
     val result = matchDay.result
@@ -128,11 +132,23 @@ fun MatchDayScreen(
                         tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
-                Text(
-                    text = "Matchday ${matchDay.match.matchday}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = matchDay.match.competitionLabel(),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Matchday ${matchDay.match.matchday}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (matchDay.match.competition ==
+                    com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE
+                ) {
+                    InfoPill("UCL")
+                }
             }
         }
 
@@ -180,6 +196,42 @@ fun MatchDayScreen(
                         label = "Opponent",
                         isUser = false,
                         modifier = Modifier.weight(1f)
+                    )
+                }
+                if (isPlayed && result != null &&
+                    result.penaltyShootoutHome != null && result.penaltyShootoutAway != null
+                ) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "After penalties: ${result.penaltyShootoutHome} - ${result.penaltyShootoutAway}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                }
+                if (isPlayed && result != null && result.extraTime) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "After extra time",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        // ---- Momentum ----
+        if (isPlayed && result != null && result.momentum.isNotEmpty()) {
+            item {
+                FmCard {
+                    SectionHeader("Momentum")
+                    Spacer(Modifier.height(10.dp))
+                    MomentumBar(
+                        momentum = result.momentum,
+                        userIsHome = result.homeClubId == career.userClubId
                     )
                 }
             }
@@ -235,6 +287,48 @@ fun MatchDayScreen(
                     SectionHeader("Your starting XI")
                     Spacer(Modifier.height(10.dp))
                     LineupList(career = career, selection = career.selection)
+                }
+            }
+
+            item {
+                HalfTimeSubsCard(
+                    career = career,
+                    matchDay = matchDay,
+                    onPlanSub = onPlanSub,
+                    onCancelSub = onCancelSub
+                )
+            }
+
+            if (matchDay.pendingOtherFixtures.isNotEmpty()) {
+                item {
+                    FmCard {
+                        SectionHeader("Also this matchday")
+                        Spacer(Modifier.height(8.dp))
+                        matchDay.pendingOtherFixtures.forEach { fixture ->
+                            val opponent = career.clubOrThrow(fixture.opponentOf(career.userClubId))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                InfoPill(fixture.competition.shortLabel)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (fixture.isHomeFor(career.userClubId)) "vs ${opponent.name}"
+                                    else "at ${opponent.name}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "These will be played automatically when you continue.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -607,6 +701,183 @@ private fun LineupList(
 
 private fun eventKey(event: MatchEvent): String =
     "${event.minute}-${event.type}-${event.playerId}-${event.clubId}"
+
+private fun com.footymanager.simulator.domain.model.Match.competitionLabel(): String = when (competition) {
+    com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE ->
+        if (tieId != null) "Champions League" else "Champions League"
+    com.footymanager.simulator.domain.model.CompetitionType.DOMESTIC_CUP -> "Domestic Cup"
+    com.footymanager.simulator.domain.model.CompetitionType.FRIENDLY -> "Friendly"
+    com.footymanager.simulator.domain.model.CompetitionType.LEAGUE -> "League"
+}
+
+/**
+ * Momentum is drawn as a centred bar per 15-minute block, so the player can see
+ * which side was on top across the match.
+ */
+@Composable
+private fun MomentumBar(momentum: List<Int>, userIsHome: Boolean) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Opponent",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "You",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            momentum.forEach { raw ->
+                val signed = if (userIsHome) raw else -raw
+                val height = (6 + kotlin.math.abs(signed) * 0.30f).dp
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.7f)
+                            .height(height)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(
+                                if (signed >= 0) MaterialTheme.colorScheme.primary
+                                else StatColors.bad
+                            )
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Lets the manager queue up to five changes at half time. The card explains the
+ * current rule so the limit is never a surprise.
+ */
+@Composable
+private fun HalfTimeSubsCard(
+    career: Career,
+    matchDay: MatchDayState,
+    onPlanSub: (Long, Long) -> Unit,
+    onCancelSub: (Long) -> Unit
+) {
+    val byId = career.userSquad.associateBy { it.id }
+    val starting = matchDay.match.let { career.selection.startingXi.mapNotNull { slot -> byId[slot.playerId] } }
+    val bench = career.selection.substitutes.mapNotNull { byId[it] }
+    val planned = matchDay.plannedSubstitutions
+
+    var offId by remember { mutableStateOf<Long?>(null) }
+    var onId by remember { mutableStateOf<Long?>(null) }
+
+    FmCard {
+        SectionHeader("Half-time changes")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Queue up to 5 substitutions. Half-time changes are free of a window.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+
+        planned.forEach { sub ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${byId[sub.playerOnId]?.name ?: "?"} for ${byId[sub.playerOffId]?.name ?: "?"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { onCancelSub(sub.playerOnId) }) {
+                    Text("Remove")
+                }
+            }
+        }
+
+        if (planned.size < 5) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Bring off",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                starting.take(6).forEach { player ->
+                    SelectablePill(
+                        text = player.surname(),
+                        selected = offId == player.id,
+                        onClick = { offId = if (offId == player.id) null else player.id }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Bring on",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                bench.take(6).forEach { player ->
+                    SelectablePill(
+                        text = player.surname(),
+                        selected = onId == player.id,
+                        onClick = { onId = if (onId == player.id) null else player.id }
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            FmSecondaryButton(
+                text = "Add change",
+                onClick = {
+                    val off = offId
+                    val on = onId
+                    if (off != null && on != null) {
+                        onPlanSub(off, on)
+                        offId = null
+                        onId = null
+                    }
+                }
+            )
+        }
+    }
+}
+
+/** A compact, tappable pill used for choosing substitution participants. */
+@Composable
+private fun SelectablePill(text: String, selected: Boolean, onClick: () -> Unit) {
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(color.copy(alpha = if (selected) 0.22f else 0.10f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    )
+}
+
+private fun com.footymanager.simulator.domain.model.Player.surname(): String =
+    name.substringAfterLast(' ').ifBlank { name }
 
 private fun formCharFor(career: Career, match: com.footymanager.simulator.domain.model.Match, clubId: Long): Char {
     val isHome = match.homeClubId == clubId

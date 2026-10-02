@@ -60,9 +60,7 @@ object ClubDatabase {
         Seed("Aldergrove FC", "ALD", 40, "Aldergrove Park", 12_500, 0x1FA55C, 0xFFFFFF, 17),
         Seed("Birchwood Rovers", "BIR", 39, "Birchwood Road", 12_000, 0xB3121B, 0xFFFFFF, 18),
         Seed("Coldharbour United", "COL", 38, "Coldharbour Field", 11_500, 0xF2C200, 0x14213D, 19),
-        Seed("Denholm Athletic", "DEN", 36, "Denholm Park", 11_000, 0x14213D, 0xFFFFFF, 20),
-        Seed("Eastmoor Town", "EAS", 35, "Eastmoor Ground", 10_500, 0x7A1FA2, 0xFFFFFF, 21),
-        Seed("Fernhill FC", "FER", 34, "Fernhill Stadium", 10_000, 0x0E7C4A, 0xFFFFFF, 22)
+        Seed("Denholm Athletic", "DEN", 36, "Denholm Park", 11_000, 0x14213D, 0xFFFFFF, 20)
     )
 
     private val laLiga = listOf(

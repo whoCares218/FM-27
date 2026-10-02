@@ -66,7 +66,26 @@ data class Career(
     val transferIncomeThisSeason: Long = 0L,
     val idCounter: Long = 1L,
     val createdAtEpochMs: Long = 0L,
-    val lastSavedEpochMs: Long = 0L
+    val lastSavedEpochMs: Long = 0L,
+    /** Stadium state for the user's club. */
+    val stadium: Stadium = Stadium("", 30_000),
+    /** Signed sponsorship for the current season, if any. */
+    val sponsorship: Sponsorship? = null,
+    /** Offers the board is considering before a new season. */
+    val sponsorOffers: List<SponsorOffer> = emptyList(),
+    /** Champions League state, or [ChampionsLeagueState.EMPTY] when not involved. */
+    val championsLeague: ChampionsLeagueState = ChampionsLeagueState.EMPTY,
+    /** Rewarded-ad allowance and totals. */
+    val adRewards: AdRewardState = AdRewardState(),
+    /** Season number the sponsorship was signed for, so it expires correctly. */
+    val sponsorshipSeason: Int = 0,
+    /**
+     * Final domestic standings of the previous season, leagueId -> ordered club ids.
+     * Drives Champions League qualification in the following campaign.
+     */
+    val lastStandings: Map<String, List<Long>> = emptyMap(),
+    /** Prize money and competition revenue already banked this season. */
+    val competitionRevenueThisSeason: Long = 0L
 ) {
     val userClub: Club
         get() = clubs.first { it.id == userClubId }
@@ -101,6 +120,35 @@ data class Career(
     fun nextMatch(): Match? =
         fixtures.filter { it.leagueId == userLeagueId && !it.isPlayed && it.involves(userClubId) }
             .minByOrNull { it.matchday }
+
+    /** The user's next fixture in any competition, ordered by date then id. */
+    fun nextFixtureAnyCompetition(): Match? =
+        fixtures
+            .filter { !it.isPlayed && it.involves(userClubId) }
+            .sortedWith(compareBy({ it.date?.let { d -> dateSortKey(d) } ?: Int.MAX_VALUE }, { it.id }))
+            .firstOrNull()
+
+    /** Every unplayed fixture in the world, ordered by date. */
+    fun upcomingFixtures(limit: Int = 20): List<Match> =
+        fixtures
+            .filter { !it.isPlayed }
+            .sortedWith(compareBy({ it.date?.let { d -> dateSortKey(d) } ?: Int.MAX_VALUE }, { it.id }))
+            .take(limit)
+
+    /** All of a club's fixtures in a given competition. */
+    fun fixturesIn(clubId: Long, competition: CompetitionType): List<Match> =
+        fixturesForClub(clubId).filter { it.competition == competition }
+
+    /** Champions League fixtures for the user's club. */
+    fun uclFixturesFor(clubId: Long): List<Match> =
+        fixtures.filter { it.competition == CompetitionType.CHAMPIONS_LEAGUE && it.involves(clubId) }
+            .sortedWith(compareBy({ it.matchday }, { it.leg }))
+
+    /** The user's next Champions League fixture, if any. */
+    fun nextUclFixture(): Match? =
+        uclFixturesFor(userClubId).firstOrNull { !it.isPlayed }
+
+    private fun dateSortKey(d: GameDate): Int = d.year * 10_000 + d.month * 100 + d.day
 
     fun fixturesForClub(clubId: Long): List<Match> =
         fixtures.filter { it.involves(clubId) }.sortedBy { it.matchday }

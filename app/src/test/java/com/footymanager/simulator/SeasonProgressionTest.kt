@@ -125,10 +125,13 @@ class SeasonProgressionTest {
         assertTrue("Players should have accumulated appearances", totalAppearances > 0)
 
         // Someone must have scored, and the goals must be attributable to players.
+        // The club now plays in more than one competition, so reconcile against
+        // every fixture the club has played rather than the league table alone.
         val totalGoals = squad.sumOf { it.seasonStats.goals }
-        val leagueGoals = career.table.getValue(career.userLeagueId)
-            .firstOrNull { it.clubId == career.userClubId }?.goalsFor ?: 0
-        assertEquals("Player goals should match the club's league goals", leagueGoals, totalGoals)
+        val clubGoals = career.fixtures
+            .filter { it.isPlayed && it.involves(career.userClubId) }
+            .sumOf { it.goalsFor(career.userClubId) }
+        assertEquals("Player goals should match the club's goals", clubGoals, totalGoals)
 
         // Ratings must be within the legal band.
         squad.filter { it.seasonStats.ratedMatches > 0 }.forEach { player ->
