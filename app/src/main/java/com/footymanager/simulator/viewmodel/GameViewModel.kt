@@ -13,7 +13,10 @@ import com.footymanager.simulator.domain.data.SettingsRepository
 import com.footymanager.simulator.domain.data.SettingsStore
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
 import com.footymanager.simulator.domain.engine.FinanceEngine
+import com.footymanager.simulator.domain.engine.MatchPhase
+import com.footymanager.simulator.domain.engine.MatchTeamInput
 import com.footymanager.simulator.domain.engine.PlannedSubstitution
+import com.footymanager.simulator.domain.engine.ProgressiveMatchEngine
 import com.footymanager.simulator.domain.engine.SeasonEngine
 import com.footymanager.simulator.domain.engine.SelectionRepair
 import com.footymanager.simulator.domain.engine.SponsorshipEngine
@@ -27,21 +30,26 @@ import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.GamePhase
 import com.footymanager.simulator.domain.model.LineupSlot
 import com.footymanager.simulator.domain.model.Match
+import com.footymanager.simulator.domain.model.MatchEvent
+import com.footymanager.simulator.domain.model.MatchEventType
 import com.footymanager.simulator.domain.model.MatchResult
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.SponsorOffer
 import com.footymanager.simulator.domain.model.Tactics
+import com.footymanager.simulator.domain.model.TeamMatchStats
 import com.footymanager.simulator.domain.model.TeamSelection
 import com.footymanager.simulator.domain.model.TrainingFocus
 import com.footymanager.simulator.domain.model.TransferOffer
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.sound.SoundManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,25 +58,75 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
-/** Transient state for the match-day experience. */
+/** How the manager chose to play the current match. */
+enum class MatchMode { PLAY, QUICK }
+
+/** A single line of the live match feed shown while the game unfolds. */
+data class MatchFeedItem(
+    val minute: String,
+    val type: MatchEventType,
+    val text: String,
+    val isUserClub: Boolean
+)
+
+/**
+ * Transient state for the match-day experience.
+ *
+ * Before kick-off this is a preview. Once [started] it reflects the live match:
+ * the clock, the running score, the event feed and the two sides' statistics all
+ * come straight from the engine, which is advanced progressively so the result is
+ * never known in advance.
+ */
 data class MatchDayState(
     val match: Match,
     val opponent: Club,
     val isHome: Boolean,
     val opponentFormationName: String,
-    val result: MatchResult? = null,
-    /** Substitutions the manager has queued for this match. */
+    val userFormationName: String,
+    val mode: MatchMode = MatchMode.PLAY,
+    /** True once the manager has pressed START MATCH. */
+    val started: Boolean = false,
+    /** True while the engine is actively advancing. */
+    val simulating: Boolean = false,
+    val phase: MatchPhase = MatchPhase.FIRST_HALF,
+    val minute: Int = 0,
+    val homeGoals: Int = 0,
+    val awayGoals: Int = 0,
+    val homeStats: TeamMatchStats = TeamMatchStats(clubId = 0),
+    val awayStats: TeamMatchStats = TeamMatchStats(clubId = 0),
+    val feed: List<MatchFeedItem> = emptyList(),
+    val homeOnPitch: List<Long> = emptyList(),
+    val awayOnPitch: List<Long> = emptyList(),
+    /** Substitutions the manager has queued, keyed by the player coming off. */
     val plannedSubstitutions: List<PlannedSubstitution> = emptyList(),
-    /** True once the first half has been played and the manager may make changes. */
-    val halfTimeReached: Boolean = false,
+    /** True when the first half has ended and the manager may take their time. */
+    val awaitingHalfTime: Boolean = false,
+    /** True when extra time is required before the tie can be settled. */
+    val awaitingExtraTime: Boolean = false,
+    val substitutionsMade: Int = 0,
+    val substitutionWindowsUsed: Int = 0,
+    val result: MatchResult? = null,
     /** Remaining fixtures on the same matchday week that are still to be played. */
     val pendingOtherFixtures: List<Match> = emptyList()
 ) {
     val isPlayed: Boolean get() = result != null
+    val isFinished: Boolean get() = result != null
 
-    /** Clubs a player can still be brought on from the bench. */
-    fun availableBenchIds(squad: List<Player>): List<Long> =
-        squad.filter { it.isAvailable }.map { it.id }
+    /** Goals for the user's club regardless of venue. */
+    val userGoals: Int get() = if (isHome) homeGoals else awayGoals
+    val opponentGoals: Int get() = if (isHome) awayGoals else homeGoals
+
+    val userStats: TeamMatchStats get() = if (isHome) homeStats else awayStats
+    val opponentStats: TeamMatchStats get() = if (isHome) awayStats else homeStats
+
+    val clockLabel: String
+        get() = when {
+            phase == MatchPhase.HALF_TIME -> "HT"
+            phase == MatchPhase.FINISHED -> "FT"
+            phase == MatchPhase.EXTRA_TIME_BREAK -> "ET"
+            minute > 90 -> "90+${minute - 90}'"
+            else -> "$minute'"
+        }
 }
 
 /**
@@ -111,6 +169,15 @@ class GameViewModel(
 
     private val _matchDay = MutableStateFlow<MatchDayState?>(null)
     val matchDay: StateFlow<MatchDayState?> = _matchDay.asStateFlow()
+
+    /** The live engine for the current match; null when no match is in progress. */
+    private var _engine: ProgressiveMatchEngine? = null
+
+    /** The career snapshot the live engine was built from. */
+    private var _engineCareer: Career? = null
+
+    /** The coroutine driving the live match clock. */
+    private var engineJob: Job? = null
 
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
@@ -281,6 +348,14 @@ class GameViewModel(
     fun setTempo(tempo: com.footymanager.simulator.domain.model.Tempo) =
         updateCareer { it.copy(tactics = it.tactics.copy(tempo = tempo)) }
 
+    /** Applies a fully-formed tactics object (used by the in-depth editor). */
+    fun setTactics(tactics: Tactics) = updateCareer { career ->
+        val repaired = SelectionRepair.repair(
+            career.selection, career.squadOf(career.userClubId), tactics.formation
+        )
+        career.copy(tactics = tactics, selection = repaired)
+    }
+
     fun setTrainingFocus(focus: TrainingFocus) =
         updateCareer { it.copy(trainingFocus = focus) }
 
@@ -365,11 +440,13 @@ class GameViewModel(
 
     // -------------------------------------------------------------- matchday
 
-    /** Prepares the match-day screen for the next fixture. */
+    /**
+     * Prepares the match-day screen for the next fixture. Nothing is simulated
+     * here: the manager gets a preview and the engine is only created when they
+     * choose Play Match or Quick Sim.
+     */
     fun prepareNextMatch(): Boolean {
         val career = _career.value ?: return false
-        // The user's own league defines the matchday; on a given matchday they
-        // may have one league fixture and, in some weeks, one European fixture.
         val matchday = career.matchdayIndex + 1
         val candidates = career.fixtures.filter {
             !it.isPlayed && it.involves(career.userClubId) && it.matchday == matchday
@@ -383,12 +460,13 @@ class GameViewModel(
             opponent = opponent,
             isHome = match.isHomeFor(career.userClubId),
             opponentFormationName = opponentTactics.formation.name,
+            userFormationName = career.tactics.formation.name,
             pendingOtherFixtures = candidates.filter { it.id != match.id }
         )
         return true
     }
 
-    /** Queues a substitution to be applied at half time. */
+    /** Queues a substitution. Applied at the next break (half time or immediately). */
     fun planSubstitution(playerOffId: Long, playerOnId: Long) {
         val matchDay = _matchDay.value ?: return
         val existing = matchDay.plannedSubstitutions
@@ -406,15 +484,362 @@ class GameViewModel(
         )
     }
 
-    /** Marks that the manager has reached half time and may make changes. */
-    fun reachHalfTime() {
+    /**
+     * Starts the prepared fixture.
+     *
+     * [MatchMode.PLAY] advances the engine minute by minute over roughly ten real
+     * minutes; [MatchMode.QUICK] compresses the same match into about ten seconds.
+     * In both cases the engine stops at half time and waits for the manager.
+     */
+    fun startMatch(mode: MatchMode = MatchMode.PLAY) {
+        val career = _career.value ?: return
         val matchDay = _matchDay.value ?: return
-        if (!matchDay.halfTimeReached) _matchDay.value = matchDay.copy(halfTimeReached = true)
+        if (matchDay.started || matchDay.isPlayed) return
+
+        // Keep the user's XI legal before kick-off.
+        val repaired = SelectionRepair.repair(
+            career.selection, career.squadOf(career.userClubId), career.tactics.formation
+        )
+        val base = career.copy(selection = repaired)
+        val (homeInput, awayInput) = SeasonEngine.buildTeamInputs(base, matchDay.match)
+
+        val engine = ProgressiveMatchEngine(
+            home = homeInput,
+            away = awayInput,
+            random = rngFor(base),
+            homeAdvantage = true,
+            determinism = SeasonEngine.determinismFor(base),
+            rules = SeasonEngine.rulesFor(matchDay.match)
+        )
+        _engine = engine
+        _engineCareer = base
+        _matchDay.value = matchDay.copy(
+            started = true,
+            simulating = true,
+            mode = mode,
+            userFormationName = base.tactics.formation.name,
+            homeOnPitch = homeInput.selection.startingXi.map { it.playerId },
+            awayOnPitch = awayInput.selection.startingXi.map { it.playerId }
+        )
+        runEngineLoop()
     }
 
     /**
-     * Plays the prepared fixture. All other matches on the same matchday are
-     * simulated at the same time so the league table stays consistent.
+     * The live loop. It repeatedly asks the engine to advance, then republishes the
+     * state. The cadence differs by mode but the underlying engine is identical.
+     */
+    private fun runEngineLoop() {
+        engineJob?.cancel()
+        engineJob = viewModelScope.launch {
+            val engine = _engine ?: return@launch
+            while (true) {
+                val mode = _matchDay.value?.mode ?: MatchMode.PLAY
+                val slice = if (mode == MatchMode.QUICK) 45 else 1
+                // Play Match: 90 minutes spread over ~9-10 real minutes at the
+                // normal animation speed; Quick Sim: two 45-minute chunks.
+                val delayMs = if (mode == MatchMode.QUICK) 1500L
+                else (animationMultiplier() * 2L).coerceAtLeast(60L)
+
+                val produced = engine.advance(slice)
+                publishEngineState(engine, produced)
+                maybeAiReact(engine)
+                when {
+                    engine.isHalfTime -> {
+                        val updated = _matchDay.value ?: return@launch
+                        _matchDay.value = updated.copy(
+                            simulating = false,
+                            awaitingHalfTime = true,
+                            phase = MatchPhase.HALF_TIME
+                        )
+                        playSound(SoundCue.WHISTLE)
+                        return@launch
+                    }
+                    engine.needsExtraTime -> {
+                        val updated = _matchDay.value ?: return@launch
+                        _matchDay.value = updated.copy(simulating = false, awaitingExtraTime = true)
+                        return@launch
+                    }
+                    engine.isFinished -> {
+                        completeMatch(engine)
+                        return@launch
+                    }
+                }
+                delay(delayMs)
+            }
+        }
+    }
+
+    /** Republishes the engine's live state into the observable match-day state. */
+    private fun publishEngineState(engine: ProgressiveMatchEngine, produced: List<MatchEvent>) {
+        val matchDay = _matchDay.value ?: return
+        val (homeStats, awayStats) = engine.stats()
+        val (hg, ag) = engine.score()
+        val feed = matchDay.feed + produced.map { event ->
+            MatchFeedItem(
+                minute = event.displayMinute,
+                type = event.type,
+                text = feedText(event),
+                isUserClub = event.clubId == (careerUserClubId() ?: -1L)
+            )
+        }
+        _matchDay.value = matchDay.copy(
+            minute = engine.clockMinute,
+            phase = engine.currentPhase,
+            homeGoals = hg,
+            awayGoals = ag,
+            homeStats = homeStats,
+            awayStats = awayStats,
+            feed = feed.takeLast(80),
+            substitutionsMade = engine.substitutionsMade(careerUserClubId() ?: -1L),
+            substitutionWindowsUsed = engine.windowsConsumed(careerUserClubId() ?: -1L)
+        )
+        // A goal is worth hearing about.
+        if (produced.any { it.type == MatchEventType.GOAL }) playSound(SoundCue.GOAL)
+    }
+
+    private fun careerUserClubId(): Long? = _career.value?.userClubId
+
+    /**
+     * Lightweight AI bench management during a live match. The AI side reacts to a
+     * tiring outfielder once per ten minutes, and only while the match is running.
+     * Reads the engine's own active input so it stays consistent with the state the
+     * engine is simulating, rather than rebuilding a fresh selection.
+     */
+    private fun maybeAiReact(engine: ProgressiveMatchEngine) {
+        val matchDay = _matchDay.value ?: return
+        if (engine.isHalfTime || engine.isFinished || engine.needsExtraTime) return
+        val minute = matchDay.minute
+        if (minute < 55 || minute % 10 != 0) return
+        val career = _career.value ?: return
+        val userIsHome = matchDay.match.homeClubId == career.userClubId
+        val events = engine.reactToFatigue(engine.activeInput(isHome = !userIsHome), isHome = !userIsHome)
+        if (events.isEmpty()) return
+        val latest = _matchDay.value ?: return
+        _matchDay.value = latest.copy(
+            feed = (latest.feed + events.map {
+                MatchFeedItem(it.displayMinute, it.type, feedText(it), false)
+            }).takeLast(80)
+        )
+    }
+
+    private fun feedText(event: MatchEvent): String = when (event.type) {
+        MatchEventType.KICK_OFF -> event.detail
+        MatchEventType.GOAL -> "GOAL - ${event.playerName}" +
+            (if (event.secondaryPlayerName.isNotBlank()) " (assist ${event.secondaryPlayerName})" else "")
+        MatchEventType.YELLOW_CARD -> "Yellow card - ${event.playerName}"
+        MatchEventType.SECOND_YELLOW -> "Second yellow - ${event.playerName} sent off"
+        MatchEventType.RED_CARD -> "Red card - ${event.playerName} sent off"
+        MatchEventType.SUBSTITUTION -> "Substitution - ${event.detail}"
+        MatchEventType.INJURY -> "Injury - ${event.playerName} ${event.detail}"
+        MatchEventType.HALF_TIME -> event.detail
+        MatchEventType.FULL_TIME -> event.detail
+        MatchEventType.EXTRA_TIME_START -> event.detail
+        MatchEventType.PENALTY_SHOOTOUT_GOAL -> event.detail
+        MatchEventType.INFO -> event.detail
+        else -> event.detail.ifBlank { event.type.name }
+    }
+
+    /**
+     * Half-time break. The manager can take as long as they like; nothing advances
+     * until they press continue. Their tactical and substitution changes are handed
+     * to the engine, which uses them for the whole second half.
+     */
+    fun continueSecondHalf() {
+        val engine = _engine ?: return
+        val matchDay = _matchDay.value ?: return
+        if (!matchDay.awaitingHalfTime) return
+
+        val career = _career.value ?: return
+        val userIsHome = matchDay.match.homeClubId == career.userClubId
+
+        // Build the updated input for the user's side from the current career state.
+        val updatedUser = buildUserInput(career, matchDay, userIsHome)
+        val (_, baseAway) = SeasonEngine.buildTeamInputs(career, matchDay.match)
+        val awayInput = if (userIsHome) baseAway else updatedUser
+
+        // AI side reacts at the break on its own.
+        val aiInput = if (userIsHome) awayInput else updatedUser
+        engine.applyDefaultHalfTimeSubs(aiInput, isHome = !userIsHome)
+
+        val changeEvents = engine.applyHalfTimeChanges(
+            homeInput = if (userIsHome) updatedUser else null,
+            awayInput = if (userIsHome) null else updatedUser
+        )
+
+        val started = engine.beginSecondHalf()
+        val (hg, ag) = engine.score()
+        val (hStats, aStats) = engine.stats()
+        _matchDay.value = matchDay.copy(
+            awaitingHalfTime = false,
+            simulating = true,
+            phase = MatchPhase.SECOND_HALF,
+            homeGoals = hg,
+            awayGoals = ag,
+            homeStats = hStats,
+            awayStats = aStats,
+            plannedSubstitutions = emptyList(),
+            feed = (matchDay.feed + (changeEvents + started).map {
+                MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == career.userClubId)
+            }).takeLast(80)
+        )
+        runEngineLoop()
+    }
+
+    /** Continues into extra time when a knockout tie is level after ninety. */
+    fun continueExtraTime() {
+        val engine = _engine ?: return
+        val matchDay = _matchDay.value ?: return
+        if (!matchDay.awaitingExtraTime) return
+        val events = engine.beginExtraTime()
+        _matchDay.value = matchDay.copy(
+            awaitingExtraTime = false,
+            simulating = true,
+            phase = MatchPhase.EXTRA_TIME_FIRST,
+            feed = (matchDay.feed + events.map {
+                MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == (careerUserClubId() ?: -1L))
+            }).takeLast(80)
+        )
+        runEngineLoop()
+    }
+
+    /** Applies a live substitution without pausing the match (in-match change). */
+    fun makeLiveSubstitution(playerOffId: Long, playerOnId: Long) {
+        val engine = _engine ?: return
+        val matchDay = _matchDay.value ?: return
+        val career = _career.value ?: return
+        val userIsHome = matchDay.match.homeClubId == career.userClubId
+        val updated = buildUserInput(
+            career, matchDay, userIsHome,
+            plannedSubstitutions = listOf(PlannedSubstitution(playerOffId, playerOnId, minute = matchDay.minute))
+        )
+        val events = engine.applyLiveSubstitution(updated, isHome = userIsHome)
+        _matchDay.value = matchDay.copy(
+            feed = (matchDay.feed + events.map {
+                MatchFeedItem(it.displayMinute, it.type, feedText(it), true)
+            }).takeLast(80),
+            substitutionsMade = engine.substitutionsMade(career.userClubId),
+            substitutionWindowsUsed = engine.windowsConsumed(career.userClubId)
+        )
+    }
+
+    /** Builds the user's current team input, optionally overriding their XI. */
+    private fun buildUserInput(
+        career: Career,
+        matchDay: MatchDayState,
+        userIsHome: Boolean,
+        plannedSubstitutions: List<PlannedSubstitution> = matchDay.plannedSubstitutions
+    ): MatchTeamInput {
+        val (homeInput, awayInput) = SeasonEngine.buildTeamInputs(career, matchDay.match)
+        val user = if (userIsHome) homeInput else awayInput
+        return user.copy(plannedSubstitutions = plannedSubstitutions)
+    }
+
+    /**
+     * Applies a tactical change to the live match immediately. The engine uses the
+     * new instructions for every remaining minute, so changing mentality, tempo or
+     * formation during play genuinely reshapes the game.
+     */
+    fun applyLiveTactics(tactics: Tactics) {
+        val engine = _engine ?: return
+        val career = _career.value ?: return
+        val matchDay = _matchDay.value ?: return
+        val userIsHome = matchDay.match.homeClubId == career.userClubId
+
+        // Repair the selection for the new shape so the engine receives a legal XI.
+        val repaired = SelectionRepair.repair(
+            career.selection, career.squadOf(career.userClubId), tactics.formation
+        )
+        val updatedCareer = career.copy(tactics = tactics, selection = repaired)
+        val current = engine.activeInput(userIsHome)
+        val (homeInput, awayInput) = SeasonEngine.buildTeamInputs(updatedCareer, matchDay.match)
+        val rebuilt = if (userIsHome) homeInput else awayInput
+
+        // A change of shape alters which players occupy which roles; a pure tactical
+        // tweak (mentality, tempo, pressing) keeps the same XI on the pitch.
+        val events = if (tactics.formationId != current.tactics.formationId) {
+            engine.applyFormationChange(
+                rebuilt.copy(plannedSubstitutions = current.plannedSubstitutions),
+                isHome = userIsHome
+            )
+        } else {
+            engine.updateActiveInput(
+                rebuilt.copy(plannedSubstitutions = current.plannedSubstitutions),
+                isHome = userIsHome
+            )
+            emptyList()
+        }
+        // Persist so the change survives the match and is used next week.
+        updateCareer { it.copy(tactics = tactics, selection = repaired) }
+
+        val latest = _matchDay.value ?: return
+        _matchDay.value = latest.copy(
+            homeOnPitch = if (userIsHome) engine.activeInput(true).selection.startingXi.map { it.playerId }
+            else latest.homeOnPitch,
+            awayOnPitch = if (!userIsHome) engine.activeInput(false).selection.startingXi.map { it.playerId }
+            else latest.awayOnPitch,
+            feed = (latest.feed + events.map {
+                MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == career.userClubId)
+            }).takeLast(80),
+            substitutionsMade = engine.substitutionsMade(career.userClubId),
+            substitutionWindowsUsed = engine.windowsConsumed(career.userClubId)
+        )
+    }
+
+    /** Called when the engine reports the match is over. */
+    private fun completeMatch(engine: ProgressiveMatchEngine) {
+        val matchDay = _matchDay.value ?: return
+        val career = _engineCareer ?: _career.value ?: return
+        viewModelScope.launch {
+            _isBusy.value = true
+            val outcome = withContext(Dispatchers.Default) {
+                val random = rngFor(career)
+                val result = engine.toResult(
+                    matchId = matchDay.match.id,
+                    leagueId = matchDay.match.leagueId,
+                    matchday = matchDay.match.matchday
+                )
+                // Settle the rest of the matchday card, then fold the result in.
+                var current = SeasonEngine.simulateOtherFixtures(career, random)
+                current = SeasonEngine.applyResult(current, matchDay.match, result, random, userMatch = true)
+                current to result
+            }
+            _career.value = outcome.first
+            _matchDay.value = matchDay.copy(
+                simulating = false,
+                phase = MatchPhase.FINISHED,
+                result = outcome.second,
+                feed = matchDay.feed + MatchFeedItem("FT", MatchEventType.FULL_TIME,
+                    "Full time: ${outcome.second.homeGoals} - ${outcome.second.awayGoals}",
+                    true)
+            )
+            _engine = null
+            _engineCareer = null
+            _isBusy.value = false
+            persist(outcome.first)
+        }
+    }
+
+    /** Pauses the live match so the manager can make changes without losing time. */
+    fun pauseMatch() {
+        engineJob?.cancel()
+        _matchDay.value = _matchDay.value?.copy(simulating = false)
+    }
+
+    /** Resumes a paused live match. */
+    fun resumeMatch() {
+        val matchDay = _matchDay.value ?: return
+        if (!matchDay.started || matchDay.isPlayed || matchDay.simulating) return
+        if (matchDay.awaitingHalfTime || matchDay.awaitingExtraTime) return
+        _matchDay.value = matchDay.copy(simulating = true)
+        runEngineLoop()
+    }
+
+    /** True while a live match is in progress and can be paused or managed. */
+    val hasLiveMatch: Boolean get() = _engine != null
+
+    /**
+     * Plays the prepared fixture instantly (legacy/test path). Simulates the whole
+     * match and folds it in, bypassing the live presentation.
      */
     fun playMatch(onComplete: (MatchResult) -> Unit = {}) {
         val career = _career.value ?: return
@@ -426,27 +851,23 @@ class GameViewModel(
             val outcome = withContext(Dispatchers.Default) {
                 var current = career
                 val random = rngFor(current)
-
-                // Keep the user's XI legal before kick-off.
                 val repaired = SelectionRepair.repair(
-                    current.selection,
-                    current.squadOf(current.userClubId),
-                    current.tactics.formation
+                    current.selection, current.squadOf(current.userClubId), current.tactics.formation
                 )
                 current = current.copy(selection = repaired)
-
                 current = SeasonEngine.simulateOtherFixtures(current, random)
                 val (updated, result) = SeasonEngine.simulateFixture(
-                    current,
-                    matchDay.match,
-                    random,
-                    userMatch = true,
+                    current, matchDay.match, random, userMatch = true,
                     plannedSubstitutions = matchDay.plannedSubstitutions
                 )
                 updated to result
             }
             _career.value = outcome.first
-            _matchDay.value = matchDay.copy(result = outcome.second, halfTimeReached = true)
+            _matchDay.value = matchDay.copy(
+                started = true, phase = MatchPhase.FINISHED, result = outcome.second,
+                homeGoals = outcome.second.homeGoals, awayGoals = outcome.second.awayGoals,
+                homeStats = outcome.second.homeStats, awayStats = outcome.second.awayStats
+            )
             _isBusy.value = false
             persist(outcome.first)
             onComplete(outcome.second)
@@ -485,6 +906,9 @@ class GameViewModel(
     /** Called after the match-day screen is dismissed: trains, recovers, advances. */
     fun advanceAfterMatch() {
         val career = _career.value ?: return
+        engineJob?.cancel()
+        _engine = null
+        _engineCareer = null
         viewModelScope.launch {
             _isBusy.value = true
             val updated = withContext(Dispatchers.Default) {
@@ -528,10 +952,21 @@ class GameViewModel(
      * the fixture simply stays as the next match.
      */
     fun cancelMatch() {
+        engineJob?.cancel()
+        _engine = null
+        _engineCareer = null
         _matchDay.value = null
     }
 
-    /** Quick-sim convenience: plays the next fixture and advances the week. */
+    /** The animation speed multiplier from the player's settings. */
+    private fun animationMultiplier(): Long =
+        (settings.value.animationSpeed.multiplier * 1000f).toLong().coerceAtLeast(60L)
+
+    /**
+     * Instant quick-sim: prepares and fully simulates the next fixture in one
+     * step, then advances the week. Used for internal/test flows; the player-facing
+     * Quick Sim runs the live engine in compressed form instead.
+     */
     fun quickSimNextMatch() {
         if (!prepareNextMatch()) return
         playMatch { advanceAfterMatch() }
@@ -693,7 +1128,9 @@ class GameViewModel(
                     season = c.season,
                     clubId = c.userClubId
                 )).takeLast(120),
-                idCounter = idc
+                idCounter = idc,
+                // Signing the deal completes the pre-season and opens the campaign.
+                phase = GamePhase.IN_SEASON
             )
         }
         return "Signed a deal with ${offer.name}."

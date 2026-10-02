@@ -501,7 +501,7 @@ object MatchEngine {
      * Momentum is a coarse, presentation-friendly signal of which side is on top
      * across the match, on a -100..100 scale where positive favours the home team.
      */
-    private fun buildMomentum(
+    internal fun buildMomentum(
         homeXg: Double,
         awayXg: Double,
         homeGoals: Int,
@@ -522,7 +522,7 @@ object MatchEngine {
 
     // ---------------------------------------------------------------- helpers
 
-    private fun applyMultiplier(strength: TeamStrength, multiplier: Double): TeamStrength {
+    internal fun applyMultiplier(strength: TeamStrength, multiplier: Double): TeamStrength {
         if (multiplier == 1.0) return strength
         return strength.copy(
             overall = strength.overall * multiplier,
@@ -533,7 +533,7 @@ object MatchEngine {
         )
     }
 
-    private fun computePossession(
+    internal fun computePossession(
         home: MatchTeamInput,
         away: MatchTeamInput,
         homeStrength: TeamStrength,
@@ -556,7 +556,7 @@ object MatchEngine {
      * the opponent's defence+keeper, which makes squad quality the dominant
      * factor while still allowing tactical swings.
      */
-    private fun expectedGoals(
+    internal fun expectedGoals(
         attack: Double,
         opponentDefence: Double,
         opponentKeeper: Double,
@@ -588,7 +588,7 @@ object MatchEngine {
      * flattens the distribution toward the expectation (used for Easy difficulty
      * so player decisions matter more), below 1.0 adds variance.
      */
-    private fun drawGoals(xg: Double, random: Random, determinism: Double): Int {
+    internal fun drawGoals(xg: Double, random: Random, determinism: Double): Int {
         val d = determinism.coerceIn(0.6, 1.8)
         // Knuth's Poisson sampler, with the rate scaled by determinism.
         val lambda = xg.pow(1.0 / d) * if (d > 1.0) xg.pow(1.0 - 1.0 / d) else 1.0
@@ -604,7 +604,7 @@ object MatchEngine {
     }
 
     /** Goal minutes, spread realistically across the match. */
-    private fun drawMinutes(count: Int, random: Random): List<Int> =
+    internal fun drawMinutes(count: Int, random: Random): List<Int> =
         (0 until count).map {
             // Slight bias toward the later stages of each half.
             val half = if (random.nextDouble() < 0.54) 1 else 2
@@ -616,14 +616,14 @@ object MatchEngine {
             minute.coerceIn(1, MINUTES + 6)
         }.sorted()
 
-    private fun pickAttacker(players: List<MatchPlayer>, random: Random): MatchPlayer? {
+    internal fun pickAttacker(players: List<MatchPlayer>, random: Random): MatchPlayer? {
         val candidates = players.filter { !it.isGoalkeeper }
         if (candidates.isEmpty()) return null
         val weights = candidates.map { max(0.05, it.attackWeight * it.confidenceFactor) }
         return weightedPick(candidates, weights, random)
     }
 
-    private fun pickAssister(
+    internal fun pickAssister(
         players: List<MatchPlayer>,
         scorer: MatchPlayer?,
         random: Random
@@ -636,7 +636,7 @@ object MatchEngine {
         return weightedPick(candidates, weights, random)
     }
 
-    private fun pickDefensivePlayer(players: List<MatchPlayer>, random: Random): MatchPlayer? {
+    internal fun pickDefensivePlayer(players: List<MatchPlayer>, random: Random): MatchPlayer? {
         val candidates = players.filter { !it.isGoalkeeper }
         if (candidates.isEmpty()) return null
         // Fouls cluster among defenders and midfielders.
@@ -644,13 +644,13 @@ object MatchEngine {
         return weightedPick(candidates, weights, random)
     }
 
-    private fun pickOutfielder(players: List<MatchPlayer>, random: Random): MatchPlayer? {
+    internal fun pickOutfielder(players: List<MatchPlayer>, random: Random): MatchPlayer? {
         val candidates = players.filter { !it.isGoalkeeper }
         if (candidates.isEmpty()) return null
         return candidates[random.nextInt(candidates.size)]
     }
 
-    private fun <T> weightedPick(items: List<T>, weights: List<Double>, random: Random): T? {
+    internal fun <T> weightedPick(items: List<T>, weights: List<Double>, random: Random): T? {
         if (items.isEmpty()) return null
         val total = weights.sum()
         if (total <= 0.0) return items[random.nextInt(items.size)]
@@ -662,14 +662,14 @@ object MatchEngine {
         return items.last()
     }
 
-    private fun drawFouls(tactics: Tactics, strength: TeamStrength, random: Random): Int {
+    internal fun drawFouls(tactics: Tactics, strength: TeamStrength, random: Random): Int {
         val base = 11.0
         val lineFactor = 0.9 + tactics.defensiveLine.pressingHeight * 0.12
         val mean = base * tactics.foulMultiplier * lineFactor
         return poisson(mean, random).coerceIn(3, 26)
     }
 
-    private fun drawCards(fouls: Int, tactics: Tactics, random: Random, isHome: Boolean): Int {
+    internal fun drawCards(fouls: Int, tactics: Tactics, random: Random, isHome: Boolean): Int {
         // Roughly one booking per six fouls, nudged by mentality and home bias.
         val base = fouls / 6.0
         val aggression = if (tactics.mentality == com.footymanager.simulator.domain.model.Mentality.VERY_ATTACKING) 1.15 else 1.0
@@ -677,36 +677,36 @@ object MatchEngine {
         return poisson(base * aggression * homeBias, random).coerceIn(0, 6)
     }
 
-    private fun drawReds(tactics: Tactics, random: Random): Int {
+    internal fun drawReds(tactics: Tactics, random: Random): Int {
         val p = 0.035 * tactics.tempo.errorRate
         return if (random.nextDouble() < p) 1 else 0
     }
 
-    private fun drawInjuries(tactics: Tactics, fouls: Int, random: Random): Int {
+    internal fun drawInjuries(tactics: Tactics, fouls: Int, random: Random): Int {
         // High pressing and fast tempo raise injury risk; fouls suffered raise it further.
         var p = 0.09 * tactics.style.fatigueBias * tactics.tempo.errorRate
         p += fouls * 0.0016
         return if (random.nextDouble() < p) 1 else 0
     }
 
-    private fun shotsFor(goals: Int, xg: Double, tactics: Tactics, random: Random): Int {
+    internal fun shotsFor(goals: Int, xg: Double, tactics: Tactics, random: Random): Int {
         val base = goals * 2.2 + xg * 7.4
         val volume = tactics.tempo.chanceVolume
         val shots = base * volume + random.nextDouble(-2.0, 2.5)
         return shots.roundToInt().coerceAtLeast(goals).coerceIn(2, 34)
     }
 
-    private fun onTargetFor(goals: Int, shots: Int, random: Random): Int {
+    internal fun onTargetFor(goals: Int, shots: Int, random: Random): Int {
         val ratio = 0.34 + random.nextDouble(-0.05, 0.08)
         return (shots * ratio).roundToInt().coerceIn(goals, shots)
     }
 
-    private fun cornersFor(xg: Double, possession: Int, random: Random): Int {
+    internal fun cornersFor(xg: Double, possession: Int, random: Random): Int {
         val base = 3.2 + xg * 2.1 + (possession - 50) * 0.035
         return poisson(base.coerceAtLeast(0.8), random).coerceIn(0, 16)
     }
 
-    private fun passAccuracy(
+    internal fun passAccuracy(
         tactics: Tactics,
         possession: Int,
         strength: TeamStrength,
@@ -721,7 +721,7 @@ object MatchEngine {
         return acc.roundToInt().coerceIn(58, 94)
     }
 
-    private fun poisson(mean: Double, random: Random): Int {
+    internal fun poisson(mean: Double, random: Random): Int {
         if (mean <= 0.0) return 0
         val limit = exp(-mean)
         var k = 0
@@ -733,7 +733,7 @@ object MatchEngine {
         return k - 1
     }
 
-    private fun round1(v: Double): Double = (v * 10).roundToInt() / 10.0
+    internal fun round1(v: Double): Double = (v * 10).roundToInt() / 10.0
 
     /** Converts substitution events into minutes played for each involved player. */
     private fun applySubMinutes(

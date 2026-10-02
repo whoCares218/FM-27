@@ -137,7 +137,7 @@ object CareerFactory {
             seasonNumber = 1,
             difficulty = request.difficulty,
             date = SeasonCalendar.SEASON_START,
-            phase = GamePhase.IN_SEASON,
+            phase = GamePhase.PRE_SEASON,
             matchdayIndex = 0,
             tactics = tactics,
             selection = selection,

@@ -34,16 +34,14 @@ object SeasonEngine {
     // ------------------------------------------------------- match simulation
 
     /**
-     * Simulates a single fixture using the full engine and folds the outcome into
-     * the career (table, results, player statistics, cards, injuries, fitness).
+     * Builds the two sides' inputs for a fixture. Exposed so the live match engine
+     * (Play Match / Quick Sim) can run the exact same setup the fast simulator uses.
      */
-    fun simulateFixture(
+    fun buildTeamInputs(
         career: Career,
         match: Match,
-        random: Random,
-        userMatch: Boolean,
         plannedSubstitutions: List<PlannedSubstitution> = emptyList()
-    ): Pair<Career, MatchResult> {
+    ): Pair<MatchTeamInput, MatchTeamInput> {
         val homeClub = career.clubOrThrow(match.homeClubId)
         val awayClub = career.clubOrThrow(match.awayClubId)
 
@@ -52,7 +50,6 @@ object SeasonEngine {
         val homeTactics = tacticsFor(career, homeClub.id, match.matchday)
         val awayTactics = tacticsFor(career, awayClub.id, match.matchday)
 
-        // Scripted substitutions only apply to the user's club.
         val homeIsUser = homeClub.id == career.userClubId
         val awayIsUser = awayClub.id == career.userClubId
 
@@ -76,28 +73,56 @@ object SeasonEngine {
             strengthMultiplier = aiMultiplier(career, awayClub.id),
             plannedSubstitutions = if (awayIsUser) plannedSubstitutions else emptyList()
         )
+        return homeInput to awayInput
+    }
 
-        val determinism = when (career.difficulty) {
-            com.footymanager.simulator.domain.model.Difficulty.EASY -> 1.35
-            com.footymanager.simulator.domain.model.Difficulty.NORMAL -> 1.0
-            com.footymanager.simulator.domain.model.Difficulty.HARD -> 0.85
-        }
+    /** The determinism setting implied by the career's difficulty. */
+    fun determinismFor(career: Career): Double = when (career.difficulty) {
+        com.footymanager.simulator.domain.model.Difficulty.EASY -> 1.35
+        com.footymanager.simulator.domain.model.Difficulty.NORMAL -> 1.0
+        com.footymanager.simulator.domain.model.Difficulty.HARD -> 0.85
+    }
+
+    fun rulesFor(match: Match): MatchRules =
+        if (match.isKnockout) MatchRules.KNOCKOUT else MatchRules.LEAGUE
+
+    /** Folds an externally produced result into the career state. */
+    fun applyResult(
+        career: Career,
+        match: Match,
+        result: MatchResult,
+        random: Random,
+        userMatch: Boolean
+    ): Career = applyResultToCareer(career, match, result, random, userMatch)
+
+    /**
+     * Simulates a single fixture using the full engine and folds the outcome into
+     * the career (table, results, player statistics, cards, injuries, fitness).
+     */
+    fun simulateFixture(
+        career: Career,
+        match: Match,
+        random: Random,
+        userMatch: Boolean,
+        plannedSubstitutions: List<PlannedSubstitution> = emptyList()
+    ): Pair<Career, MatchResult> {
+        val (homeInput, awayInput) = buildTeamInputs(career, match, plannedSubstitutions)
 
         val sim = MatchEngine.simulate(
             homeInput,
             awayInput,
             random,
             homeAdvantage = true,
-            determinism = determinism,
-            rules = if (match.isKnockout) MatchRules.KNOCKOUT else MatchRules.LEAGUE
+            determinism = determinismFor(career),
+            rules = rulesFor(match)
         )
 
         val result = MatchResult(
             matchId = match.id,
             leagueId = match.leagueId,
             matchday = match.matchday,
-            homeClubId = homeClub.id,
-            awayClubId = awayClub.id,
+            homeClubId = homeInput.clubId,
+            awayClubId = awayInput.clubId,
             homeGoals = sim.homeGoals,
             awayGoals = sim.awayGoals,
             homeStats = sim.homeStats,
@@ -918,7 +943,7 @@ object SeasonEngine {
             season = nextSeasonLabel,
             seasonNumber = nextSeasonNumber,
             date = newStartDate,
-            phase = com.footymanager.simulator.domain.model.GamePhase.IN_SEASON,
+            phase = com.footymanager.simulator.domain.model.GamePhase.PRE_SEASON,
             matchdayIndex = 0,
             clubs = refreshedClubs,
             players = retainedPlayers,

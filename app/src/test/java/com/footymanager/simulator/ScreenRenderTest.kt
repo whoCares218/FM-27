@@ -103,7 +103,7 @@ class ScreenRenderTest {
     @Test
     fun `home screen renders a new career`() {
         val c = career()
-        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}) }
+        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}, {}) }
         composeRule.onRoot().assertExists()
         composeRule.onNodeWithText(c.userClub.name, substring = true).assertExists()
     }
@@ -111,7 +111,7 @@ class ScreenRenderTest {
     @Test
     fun `home screen renders mid season with results and news`() {
         val c = playedCareer(6)
-        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}) }
+        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}, {}) }
         composeRule.onRoot().assertExists()
     }
 
@@ -140,6 +140,7 @@ class ScreenRenderTest {
                 onSetStyle = { style = it },
                 onSetDefensiveLine = {},
                 onSetTempo = { tempo = it },
+                onSetTactics = {},
                 onSetTrainingFocus = {},
                 onAutoPick = {},
                 onAssignSlot = { _, _ -> },
@@ -266,7 +267,7 @@ class ScreenRenderTest {
 
         setScreen {
             when (screen) {
-                0 -> HomeScreen(currentCareer, {}, {}, {}, {}, {}, {}, {})
+                0 -> HomeScreen(currentCareer, {}, {}, {}, {}, {}, {}, {}, {})
                 1 -> LeagueScreen(currentCareer, {})
                 2 -> FinancesScreen(currentCareer)
                 3 -> BoardScreen(currentCareer)

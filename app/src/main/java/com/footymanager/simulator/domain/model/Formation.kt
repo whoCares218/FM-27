@@ -296,8 +296,46 @@ data class Formation(
             description = "Narrow midfield diamond behind a front two; width comes from the full backs."
         )
 
+        val F3421 = Formation(
+            id = "3-4-2-1",
+            name = "3-4-2-1",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LCB, SlotRole.CB, SlotRole.RCB,
+                SlotRole.LWB, SlotRole.LCM, SlotRole.RCM, SlotRole.RWB,
+                SlotRole.CAM, SlotRole.CAM,
+                SlotRole.ST
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.30f, 0.20f), pt(0.50f, 0.17f), pt(0.70f, 0.20f),
+                pt(0.08f, 0.48f), pt(0.38f, 0.46f), pt(0.62f, 0.46f), pt(0.92f, 0.48f),
+                pt(0.36f, 0.70f), pt(0.64f, 0.70f),
+                pt(0.50f, 0.88f)
+            ),
+            description = "Back three with wing-back width and two tens supporting a lone striker."
+        )
+
+        val F523 = Formation(
+            id = "5-2-3",
+            name = "5-2-3",
+            roles = listOf(
+                SlotRole.GK,
+                SlotRole.LWB, SlotRole.LCB, SlotRole.CB, SlotRole.RCB, SlotRole.RWB,
+                SlotRole.LCM, SlotRole.RCM,
+                SlotRole.LW, SlotRole.ST, SlotRole.RW
+            ),
+            coordinates = listOf(
+                pt(0.50f, 0.05f),
+                pt(0.08f, 0.34f), pt(0.30f, 0.20f), pt(0.50f, 0.17f), pt(0.70f, 0.20f), pt(0.92f, 0.34f),
+                pt(0.38f, 0.48f), pt(0.62f, 0.48f),
+                pt(0.16f, 0.78f), pt(0.50f, 0.86f), pt(0.84f, 0.78f)
+            ),
+            description = "Five at the back but a front three, giving a genuine counter-attacking threat."
+        )
+
         val all: List<Formation> = listOf(
-            F433, F4231, F442, F352, F343, F532, F4141, F4411, F4222, F541, F4312
+            F433, F4231, F442, F352, F343, F532, F4141, F4411, F4222, F541, F4312, F3421, F523
         )
 
         fun byId(id: String): Formation = all.firstOrNull { it.id == id } ?: F4231

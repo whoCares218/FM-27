@@ -59,6 +59,7 @@ fun HomeScreen(
     onOpenLeague: () -> Unit,
     onOpenNews: () -> Unit,
     onOpenBoard: () -> Unit,
+    onOpenSponsors: () -> Unit,
     onStartNextSeason: () -> Unit
 ) {
     val club = career.userClub
@@ -66,6 +67,7 @@ fun HomeScreen(
     val league = League.byId(career.userLeagueId)
     val position = career.userLeaguePosition
     val recentForm = career.recentForm(career.userClubId)
+    val preSeason = career.phase == GamePhase.PRE_SEASON && career.sponsorship == null
     val seasonEnded = career.phase == GamePhase.SEASON_ENDED || nextMatch == null
 
     LazyColumn(
@@ -152,7 +154,24 @@ fun HomeScreen(
 
         // ---- Primary actions ----
         item {
-            if (seasonEnded) {
+            if (preSeason) {
+                FmCard(accent = MaterialTheme.colorScheme.primary) {
+                    SectionHeader("Pre-season")
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Choose a sponsorship deal before the ${career.season} season begins. " +
+                            "Your decision sets the club's off-field income for the campaign.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    FmPrimaryButton(
+                        text = "Choose Sponsorship",
+                        onClick = onOpenSponsors,
+                        icon = Icons.Filled.PlayArrow
+                    )
+                }
+            } else if (seasonEnded) {
                 FmPrimaryButton(
                     text = "View Season Summary & Continue",
                     onClick = onStartNextSeason,

@@ -41,6 +41,7 @@ import com.footymanager.simulator.ui.navigation.BottomTab
 import com.footymanager.simulator.ui.navigation.Routes
 import com.footymanager.simulator.ui.screens.AboutDialog
 import com.footymanager.simulator.ui.screens.BoardScreen
+import com.footymanager.simulator.ui.screens.CompetitionHubScreen
 import com.footymanager.simulator.ui.screens.FinancesScreen
 import com.footymanager.simulator.ui.screens.FixturesScreen
 import com.footymanager.simulator.ui.screens.HomeScreen
@@ -63,6 +64,7 @@ import com.footymanager.simulator.ui.screens.TransfersScreen
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.theme.FootballManagerTheme
 import com.footymanager.simulator.viewmodel.GameViewModel
+import com.footymanager.simulator.viewmodel.MatchMode
 
 /** Root composable: owns the theme, the navigation graph and the bottom bar. */
 @Composable
@@ -254,11 +256,19 @@ private fun AppNavHost(
                             navController.navigate(Routes.MATCH_DAY)
                         }
                     },
-                    onQuickSim = { viewModel.quickSimNextMatch() },
+                    onQuickSim = {
+                        // Quick Sim runs the same live engine in compressed form and
+                        // still pauses at half time for the manager.
+                        if (viewModel.prepareNextMatch()) {
+                            navController.navigate(Routes.MATCH_DAY)
+                            viewModel.startMatch(MatchMode.QUICK)
+                        }
+                    },
                     onOpenSquad = { navController.navigate(Routes.SQUAD) },
                     onOpenLeague = { navController.navigate(Routes.LEAGUE) },
                     onOpenNews = { navController.navigate(Routes.NEWS) },
                     onOpenBoard = { navController.navigate(Routes.BOARD) },
+                    onOpenSponsors = { navController.navigate(Routes.SPONSORS) },
                     onStartNextSeason = { navController.navigate(Routes.SEASON_SUMMARY) }
                 )
             }
@@ -304,6 +314,7 @@ private fun AppNavHost(
                     onSetStyle = { viewModel.setStyle(it) },
                     onSetDefensiveLine = { viewModel.setDefensiveLine(it) },
                     onSetTempo = { viewModel.setTempo(it) },
+                    onSetTactics = { viewModel.setTactics(it) },
                     onSetTrainingFocus = { viewModel.setTrainingFocus(it) },
                     onAutoPick = { viewModel.autoPickSelection() },
                     onAssignSlot = { slot, player -> viewModel.assignPlayerToSlot(slot, player) },
@@ -352,6 +363,17 @@ private fun AppNavHost(
         }
 
         composable(Routes.LEAGUE) {
+            if (career != null) {
+                CompetitionHubScreen(
+                    career = career,
+                    onOpenLeague = { navController.navigate(Routes.LEAGUE_TABLE) },
+                    onOpenChampionsLeague = { navController.navigate(Routes.CHAMPIONS_LEAGUE) },
+                    onOpenFixtures = { navController.navigate(Routes.FIXTURES) }
+                )
+            }
+        }
+
+        composable(Routes.LEAGUE_TABLE) {
             if (career != null) {
                 LeagueScreen(career = career, onOpenFixtures = { navController.navigate(Routes.FIXTURES) })
             }
@@ -459,17 +481,22 @@ private fun AppNavHost(
                 MatchDayScreen(
                     career = career,
                     matchDay = matchDay,
-                    animationMultiplier = settings.animationSpeed.multiplier,
                     onBack = {
                         // Only advance the calendar if the match was actually played.
                         if (matchDay.isPlayed) viewModel.advanceAfterMatch()
                         else viewModel.cancelMatch()
                         navController.popBackStack()
                     },
-                    onPlay = { viewModel.playMatch() },
+                    onStart = { mode -> viewModel.startMatch(mode) },
+                    onContinueSecondHalf = { viewModel.continueSecondHalf() },
+                    onContinueExtraTime = { viewModel.continueExtraTime() },
+                    onPause = { viewModel.pauseMatch() },
+                    onResume = { viewModel.resumeMatch() },
+                    onMakeLiveSub = { off, on -> viewModel.makeLiveSubstitution(off, on) },
                     onPlanSub = { off, on -> viewModel.planSubstitution(off, on) },
                     onCancelSub = { viewModel.cancelSubstitution(it) },
-                    onContinue = {
+                    onApplyLiveTactics = { viewModel.applyLiveTactics(it) },
+                    onContinueAfterMatch = {
                         viewModel.advanceAfterMatch()
                         navController.navigate(Routes.HOME) {
                             popUpTo(Routes.HOME) { inclusive = true }

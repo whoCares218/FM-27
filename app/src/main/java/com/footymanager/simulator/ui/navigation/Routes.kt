@@ -28,6 +28,7 @@ object Routes {
     const val TACTICS = "tactics"
     const val TRANSFERS = "transfers"
     const val LEAGUE = "league"
+    const val LEAGUE_TABLE = "league_table"
     const val MORE = "more"
 
     const val PLAYER_DETAIL = "player/{playerId}"
@@ -76,7 +77,6 @@ data class MoreDestination(
 
 val moreDestinations: List<MoreDestination> = listOf(
     MoreDestination(Routes.FIXTURES, "Fixtures", "Your full season schedule", Icons.Outlined.Groups),
-    MoreDestination(Routes.CHAMPIONS_LEAGUE, "Champions League", "Europe's elite competition", Icons.Outlined.EmojiEvents),
     MoreDestination(Routes.TRAINING, "Training", "Set the weekly training focus", Icons.Outlined.Tune),
     MoreDestination(Routes.STADIUM, "Stadium", "Capacity, tickets and expansion", Icons.Outlined.Home),
     MoreDestination(Routes.SPONSORS, "Sponsorship", "Sign a season deal", Icons.Outlined.SwapHoriz),

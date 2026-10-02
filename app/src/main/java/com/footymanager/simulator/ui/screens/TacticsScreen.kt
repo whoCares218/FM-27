@@ -42,14 +42,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.footymanager.simulator.domain.engine.SelectionRepair
+import com.footymanager.simulator.domain.model.Aggression
+import com.footymanager.simulator.domain.model.BuildUp
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.CounterAttack
+import com.footymanager.simulator.domain.model.Crossing
 import com.footymanager.simulator.domain.model.DefensiveLine
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.Mentality
+import com.footymanager.simulator.domain.model.PassingStyle
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.PlayStyle
+import com.footymanager.simulator.domain.model.PossessionFocus
+import com.footymanager.simulator.domain.model.Pressing
+import com.footymanager.simulator.domain.model.Tactics
 import com.footymanager.simulator.domain.model.Tempo
 import com.footymanager.simulator.domain.model.TrainingFocus
+import com.footymanager.simulator.domain.model.Width
 import com.footymanager.simulator.ui.components.FmCard
 import com.footymanager.simulator.ui.components.FmPrimaryButton
 import com.footymanager.simulator.ui.components.FmSecondaryButton
@@ -75,6 +84,7 @@ fun TacticsScreen(
     onSetStyle: (PlayStyle) -> Unit,
     onSetDefensiveLine: (DefensiveLine) -> Unit,
     onSetTempo: (Tempo) -> Unit,
+    onSetTactics: (Tactics) -> Unit,
     onSetTrainingFocus: (TrainingFocus) -> Unit,
     onAutoPick: () -> Unit,
     onAssignSlot: (Int, Long) -> Unit,
@@ -273,6 +283,11 @@ fun TacticsScreen(
             }
         }
 
+        // ---- Advanced instructions ----
+        item {
+            AdvancedInstructionsCard(tactics = tactics, onApply = onSetTactics)
+        }
+
         // ---- Captain ----
         item {
             FmCard {
@@ -384,6 +399,107 @@ fun TacticsScreen(
                 pickerSlot = null
             }
         )
+    }
+}
+
+/**
+ * Advanced team instructions. Each selector maps to a real multiplier in the
+ * match engine (possession, chance volume, fouls, counter threat), so these are
+ * genuine tactical levers rather than cosmetic options.
+ */
+@Composable
+private fun AdvancedInstructionsCard(tactics: Tactics, onApply: (Tactics) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+
+    FmCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            SectionHeader("Advanced instructions")
+            Text(
+                text = if (expanded) "Hide" else "Show",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Width",
+                options = Width.entries.toList(),
+                selected = tactics.width,
+                onSelect = { onApply(tactics.copy(width = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Pressing",
+                options = Pressing.entries.toList(),
+                selected = tactics.pressing,
+                onSelect = { onApply(tactics.copy(pressing = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Passing",
+                options = PassingStyle.entries.toList(),
+                selected = tactics.passingStyle,
+                onSelect = { onApply(tactics.copy(passingStyle = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Build-up",
+                options = BuildUp.entries.toList(),
+                selected = tactics.buildUp,
+                onSelect = { onApply(tactics.copy(buildUp = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Counter-attack",
+                options = CounterAttack.entries.toList(),
+                selected = tactics.counterAttack,
+                onSelect = { onApply(tactics.copy(counterAttack = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Possession focus",
+                options = PossessionFocus.entries.toList(),
+                selected = tactics.possessionFocus,
+                onSelect = { onApply(tactics.copy(possessionFocus = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Crossing",
+                options = Crossing.entries.toList(),
+                selected = tactics.crossing,
+                onSelect = { onApply(tactics.copy(crossing = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(12.dp))
+            OptionSelector(
+                label = "Aggression",
+                options = Aggression.entries.toList(),
+                selected = tactics.aggression,
+                onSelect = { onApply(tactics.copy(aggression = it)) },
+                optionLabel = { it.label }
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Higher pressing and aggression win the ball back sooner but " +
+                    "cost more fouls and cards. Direct, quick build-up creates more " +
+                    "chances but concedes possession.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

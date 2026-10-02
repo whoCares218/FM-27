@@ -44,6 +44,109 @@ import com.footymanager.simulator.ui.theme.StatColors
 
 /** League table, results and upcoming fixtures for the selected competition. */
 @Composable
+fun CompetitionHubScreen(
+    career: Career,
+    onOpenLeague: () -> Unit,
+    onOpenChampionsLeague: () -> Unit,
+    onOpenFixtures: () -> Unit
+) {
+    val league = League.byId(career.userLeagueId)
+    val position = career.userLeaguePosition
+    val ucl = career.championsLeague
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            FmCard {
+                SectionHeader("Competitions")
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Every competition your club is involved in this season.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            FmCard(onClick = onOpenLeague) {
+                SectionHeader(league.name) {
+                    Text(
+                        text = if (position == 0) "—" else "$position",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Domestic league table, results and upcoming fixtures.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Tap to open the table",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        item {
+            FmCard(onClick = onOpenChampionsLeague) {
+                SectionHeader("Champions League") {
+                    if (ucl.active) {
+                        Text(
+                            text = "In progress",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (ucl.active) {
+                        "The 36-team league phase, knockout bracket and European statistics."
+                    } else {
+                        "Follow the league phase, knockouts and European statistics."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Tap to open",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        item {
+            FmCard(onClick = onOpenFixtures) {
+                SectionHeader("Fixtures and results")
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Your full calendar across every competition, with dates and results.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Tap to open",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+/** League table, results and upcoming fixtures for the selected competition. */
+@Composable
 fun LeagueScreen(
     career: Career,
     onOpenFixtures: () -> Unit
