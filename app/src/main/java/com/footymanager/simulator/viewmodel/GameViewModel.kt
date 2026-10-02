@@ -62,9 +62,25 @@ data class MatchDayState(
  */
 class GameViewModel(
     application: Application,
-    private val saveRepository: CareerStore = SaveRepository(application),
-    private val settingsRepository: SettingsStore = SettingsRepository(application)
+    private val saveRepository: CareerStore,
+    private val settingsRepository: SettingsStore
 ) : AndroidViewModel(application) {
+
+    /**
+     * Constructor used by the platform's default ViewModel factory, which
+     * instantiates AndroidViewModel subclasses reflectively and only ever looks
+     * for a single-argument `(Application)` constructor.
+     *
+     * The primary constructor's default arguments compile down to a synthetic
+     * constructor with a bitmask parameter, not a real `(Application)` overload,
+     * so without this the reflective lookup fails and the app crashes on launch.
+     * Tests inject their own stores through the primary constructor.
+     */
+    constructor(application: Application) : this(
+        application,
+        SaveRepository(application),
+        SettingsRepository(application)
+    )
 
     private val _career = MutableStateFlow<Career?>(null)
     val career: StateFlow<Career?> = _career.asStateFlow()

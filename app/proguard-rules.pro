@@ -21,6 +21,13 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
+# ViewModels are instantiated reflectively by the platform's default factory,
+# which looks up the (Application) constructor. Keep that constructor so R8
+# cannot rename or strip it out of a release build.
+-keep class * extends androidx.lifecycle.AndroidViewModel {
+    <init>(android.app.Application);
+}
+
 # Compose
 -dontwarn androidx.compose.**
 
