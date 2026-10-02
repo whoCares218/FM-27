@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pitch_background">#FF0B1220</color>
+    <color name="pitch_surface">#FF141C2E</color>
+    <color name="pitch_accent">#FF1FA55C</color>
+    <color name="ic_launcher_background">#FF0B1220</color>
+</resources>

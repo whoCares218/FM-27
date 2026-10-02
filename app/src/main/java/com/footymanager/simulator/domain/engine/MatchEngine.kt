@@ -1,0 +1,596 @@
+package com.footymanager.simulator.domain.engine
+
+import com.footymanager.simulator.domain.model.MatchEvent
+import com.footymanager.simulator.domain.model.MatchEventType
+import com.footymanager.simulator.domain.model.Player
+import com.footymanager.simulator.domain.model.PlayerMatchRating
+import com.footymanager.simulator.domain.model.Tactics
+import com.footymanager.simulator.domain.model.TeamMatchStats
+import com.footymanager.simulator.domain.model.TeamSelection
+import com.footymanager.simulator.domain.model.Formation
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.random.Random
+
+/** Inputs for one side of a match. */
+data class MatchTeamInput(
+    val clubId: Long,
+    val clubName: String,
+    val reputation: Int,
+    val tactics: Tactics,
+    val selection: TeamSelection,
+    /** All players belonging to this club, keyed by id. */
+    val squadById: Map<Long, Player>,
+    /** Effective strength including the difficulty-scaled AI adjustment. */
+    val strengthMultiplier: Double = 1.0
+)
+
+data class SimulatedMatch(
+    val homeGoals: Int,
+    val awayGoals: Int,
+    val homeStats: TeamMatchStats,
+    val awayStats: TeamMatchStats,
+    val events: List<MatchEvent>,
+    val ratings: List<PlayerMatchRating>,
+    val playerOfTheMatchId: Long?
+)
+
+/**
+ * The match simulation engine.
+ *
+ * The design goal is *structured randomness*: a stronger, better-organised team
+ * creates more and better chances, but goals remain a stochastic process, so
+ * upsets happen at a believable rate.
+ *
+ * Steps:
+ *  1. Score both sides' attack/midfield/defence from their selected XI, tactics,
+ *     fitness, form, morale and home advantage.
+ *  2. Derive expected goals (xG) for each side from a Poisson-style model whose
+ *     rate depends on the ratio of one side's attack to the other's defence.
+ *  3. Draw the actual goal count from that rate.
+ *  4. Generate shots, possession, cards, corners and injuries with rates that
+ *     scale consistently with the goals and tactics.
+ *  5. Attribute goals and assists to individual players by weighting on their
+ *     attacking/creative contribution.
+ */
+object MatchEngine {
+
+    private const val MINUTES = 90
+    private const val HOME_ADVANTAGE = 0.34
+
+    /** Average goals per team per match in the model, before any modifiers. */
+    private const val BASE_XG = 1.32
+
+    fun simulate(
+        home: MatchTeamInput,
+        away: MatchTeamInput,
+        random: Random,
+        homeAdvantage: Boolean = true,
+        /** Reduces randomness so the player's decisions weigh more heavily. */
+        determinism: Double = 1.0
+    ): SimulatedMatch {
+        val homePlayers = TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation)
+        val awayPlayers = TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation)
+
+        val homeStrength = applyMultiplier(
+            TeamStrengthCalculator.build(home.clubId, homePlayers, home.reputation),
+            home.strengthMultiplier
+        )
+        val awayStrength = applyMultiplier(
+            TeamStrengthCalculator.build(away.clubId, awayPlayers, away.reputation),
+            away.strengthMultiplier
+        )
+
+        val events = mutableListOf<MatchEvent>()
+
+        // ---- Possession ----
+        val possessionHome = computePossession(home, away, homeStrength, awayStrength, homeAdvantage)
+
+        // ---- Expected goals ----
+        val homeXg = expectedGoals(
+            attack = homeStrength.attack,
+            opponentDefence = awayStrength.defence,
+            opponentKeeper = awayStrength.goalkeeping,
+            tactics = home.tactics,
+            possessionShare = possessionHome / 100.0,
+            homeAdvantage = homeAdvantage
+        )
+        val awayXg = expectedGoals(
+            attack = awayStrength.attack,
+            opponentDefence = homeStrength.defence,
+            opponentKeeper = homeStrength.goalkeeping,
+            tactics = away.tactics,
+            possessionShare = (100 - possessionHome) / 100.0,
+            homeAdvantage = false
+        )
+
+        val homeGoals = drawGoals(homeXg, random, determinism)
+        val awayGoals = drawGoals(awayXg, random, determinism)
+
+        val ratingsTracker = RatingTracker()
+        ratingsTracker.register(homePlayers, isHome = true)
+        ratingsTracker.register(awayPlayers, isHome = false)
+
+        val homeEvents = mutableListOf<MatchEvent>()
+        val awayEvents = mutableListOf<MatchEvent>()
+
+        events += MatchEvent(0, MatchEventType.KICK_OFF, home.clubId, detail = "Kick off at ${home.clubName}")
+
+        // ---- Goals ----
+        val homeGoalMinutes = drawMinutes(homeGoals, random)
+        val awayGoalMinutes = drawMinutes(awayGoals, random)
+
+        for (minute in homeGoalMinutes) {
+            val scorer = pickAttacker(homePlayers, random)
+            val assister = pickAssister(homePlayers, scorer, random)
+            homeEvents += MatchEvent(
+                minute = minute,
+                type = MatchEventType.GOAL,
+                clubId = home.clubId,
+                playerId = scorer?.id,
+                playerName = scorer?.name ?: "",
+                secondaryPlayerId = assister?.id,
+                secondaryPlayerName = assister?.name ?: "",
+                detail = if (assister != null) "Assisted by ${assister.name}" else "Unassisted"
+            )
+            if (scorer != null) ratingsTracker.addGoal(scorer.id)
+            if (assister != null) ratingsTracker.addAssist(assister.id)
+        }
+
+        for (minute in awayGoalMinutes) {
+            val scorer = pickAttacker(awayPlayers, random)
+            val assister = pickAssister(awayPlayers, scorer, random)
+            awayEvents += MatchEvent(
+                minute = minute,
+                type = MatchEventType.GOAL,
+                clubId = away.clubId,
+                playerId = scorer?.id,
+                playerName = scorer?.name ?: "",
+                secondaryPlayerId = assister?.id,
+                secondaryPlayerName = assister?.name ?: "",
+                detail = if (assister != null) "Assisted by ${assister.name}" else "Unassisted"
+            )
+            if (scorer != null) ratingsTracker.addGoal(scorer.id)
+            if (assister != null) ratingsTracker.addAssist(assister.id)
+        }
+
+        // ---- Cards ----
+        val homeFouls = drawFouls(home.tactics, homeStrength, random)
+        val awayFouls = drawFouls(away.tactics, awayStrength, random)
+
+        val homeYellows = drawCards(homeFouls, home.tactics, random, isHome = true)
+        val awayYellows = drawCards(awayFouls, away.tactics, random, isHome = false)
+
+        repeat(homeYellows) {
+            val booked = pickDefensivePlayer(homePlayers, random)
+            homeEvents += MatchEvent(
+                minute = random.nextInt(6, MINUTES + 1),
+                type = MatchEventType.YELLOW_CARD,
+                clubId = home.clubId,
+                playerId = booked?.id,
+                playerName = booked?.name ?: "",
+                detail = "Booked for a foul"
+            )
+            if (booked != null) ratingsTracker.addYellow(booked.id)
+        }
+        repeat(awayYellows) {
+            val booked = pickDefensivePlayer(awayPlayers, random)
+            awayEvents += MatchEvent(
+                minute = random.nextInt(6, MINUTES + 1),
+                type = MatchEventType.YELLOW_CARD,
+                clubId = away.clubId,
+                playerId = booked?.id,
+                playerName = booked?.name ?: "",
+                detail = "Booked for a foul"
+            )
+            if (booked != null) ratingsTracker.addYellow(booked.id)
+        }
+
+        // Red cards are rare and slightly more likely for aggressive setups.
+        val homeReds = drawReds(home.tactics, random)
+        val awayReds = drawReds(away.tactics, random)
+        repeat(homeReds) {
+            val sentOff = pickDefensivePlayer(homePlayers, random)
+            homeEvents += MatchEvent(
+                minute = random.nextInt(25, MINUTES + 1),
+                type = MatchEventType.RED_CARD,
+                clubId = home.clubId,
+                playerId = sentOff?.id,
+                playerName = sentOff?.name ?: "",
+                detail = "Sent off"
+            )
+            if (sentOff != null) ratingsTracker.addRed(sentOff.id)
+        }
+        repeat(awayReds) {
+            val sentOff = pickDefensivePlayer(awayPlayers, random)
+            awayEvents += MatchEvent(
+                minute = random.nextInt(25, MINUTES + 1),
+                type = MatchEventType.RED_CARD,
+                clubId = away.clubId,
+                playerId = sentOff?.id,
+                playerName = sentOff?.name ?: "",
+                detail = "Sent off"
+            )
+            if (sentOff != null) ratingsTracker.addRed(sentOff.id)
+        }
+
+        // ---- Injuries ----
+        val homeInjuries = drawInjuries(home.tactics, homeFouls, random)
+        val awayInjuries = drawInjuries(away.tactics, awayFouls, random)
+        repeat(homeInjuries) {
+            val victim = pickOutfielder(homePlayers, random)
+            homeEvents += MatchEvent(
+                minute = random.nextInt(10, MINUTES + 1),
+                type = MatchEventType.INJURY,
+                clubId = home.clubId,
+                playerId = victim?.id,
+                playerName = victim?.name ?: "",
+                detail = "Forced off with an injury"
+            )
+        }
+        repeat(awayInjuries) {
+            val victim = pickOutfielder(awayPlayers, random)
+            awayEvents += MatchEvent(
+                minute = random.nextInt(10, MINUTES + 1),
+                type = MatchEventType.INJURY,
+                clubId = away.clubId,
+                playerId = victim?.id,
+                playerName = victim?.name ?: "",
+                detail = "Forced off with an injury"
+            )
+        }
+
+        // ---- Substitutions (a reasonable default pattern when none are scripted) ----
+        val homeSubs = defaultSubstitutions(homePlayers, home.selection, home.squadById, random)
+        val awaySubs = defaultSubstitutions(awayPlayers, away.selection, away.squadById, random)
+        homeEvents += homeSubs
+        awayEvents += awaySubs
+
+        // ---- Shots, corners and pass accuracy derived from the same model ----
+        val homeShots = shotsFor(homeGoals, homeXg, home.tactics, random)
+        val awayShots = shotsFor(awayGoals, awayXg, away.tactics, random)
+        val homeOnTarget = onTargetFor(homeGoals, homeShots, random)
+        val awayOnTarget = onTargetFor(awayGoals, awayShots, random)
+
+        val homeCorners = cornersFor(homeXg, possessionHome, random)
+        val awayCorners = cornersFor(awayXg, 100 - possessionHome, random)
+
+        val homePassAccuracy = passAccuracy(home.tactics, possessionHome, homeStrength, awayStrength, random)
+        val awayPassAccuracy = passAccuracy(away.tactics, 100 - possessionHome, awayStrength, homeStrength, random)
+
+        // ---- Assemble the timeline ----
+        val halfTime = MatchEvent(
+            minute = 45,
+            type = MatchEventType.HALF_TIME,
+            clubId = home.clubId,
+            detail = "Half time: ${home.clubName} ${homeGoalMinutes.count { it <= 45 }} - " +
+                "${awayGoalMinutes.count { it <= 45 }} ${away.clubName}"
+        )
+        val fullTime = MatchEvent(
+            minute = 90,
+            type = MatchEventType.FULL_TIME,
+            clubId = home.clubId,
+            detail = "Full time: ${home.clubName} $homeGoals - $awayGoals ${away.clubName}"
+        )
+
+        val allTimeline = (homeEvents + awayEvents)
+            .sortedBy { it.minute }
+            .toMutableList()
+        allTimeline.add(halfTime)
+        allTimeline.add(fullTime)
+        val timeline = allTimeline.sortedBy { it.minute }
+        events += timeline
+
+        val homeStats = TeamMatchStats(
+            clubId = home.clubId,
+            goals = homeGoals,
+            shots = homeShots,
+            shotsOnTarget = homeOnTarget,
+            possession = possessionHome,
+            fouls = homeFouls,
+            corners = homeCorners,
+            yellowCards = homeYellows,
+            redCards = homeReds,
+            passAccuracy = homePassAccuracy,
+            expectedGoals = round1(homeXg)
+        )
+        val awayStats = TeamMatchStats(
+            clubId = away.clubId,
+            goals = awayGoals,
+            shots = awayShots,
+            shotsOnTarget = awayOnTarget,
+            possession = 100 - possessionHome,
+            fouls = awayFouls,
+            corners = awayCorners,
+            yellowCards = awayYellows,
+            redCards = awayReds,
+            passAccuracy = awayPassAccuracy,
+            expectedGoals = round1(awayXg)
+        )
+
+        // ---- Player ratings ----
+        val ratings = ratingsTracker.finish(
+            homePlayers = homePlayers,
+            awayPlayers = awayPlayers,
+            homeStats = homeStats,
+            awayStats = awayStats,
+            homeStrength = homeStrength,
+            awayStrength = awayStrength,
+            homeSelection = home.selection,
+            awaySelection = away.selection
+        )
+
+        val motm = ratings.maxByOrNull { it.rating }?.playerId
+
+        return SimulatedMatch(
+            homeGoals = homeGoals,
+            awayGoals = awayGoals,
+            homeStats = homeStats,
+            awayStats = awayStats,
+            events = events,
+            ratings = ratings,
+            playerOfTheMatchId = motm
+        )
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    private fun applyMultiplier(strength: TeamStrength, multiplier: Double): TeamStrength {
+        if (multiplier == 1.0) return strength
+        return strength.copy(
+            overall = strength.overall * multiplier,
+            attack = strength.attack * multiplier,
+            midfield = strength.midfield * multiplier,
+            defence = strength.defence * multiplier,
+            goalkeeping = strength.goalkeeping * multiplier
+        )
+    }
+
+    private fun computePossession(
+        home: MatchTeamInput,
+        away: MatchTeamInput,
+        homeStrength: TeamStrength,
+        awayStrength: TeamStrength,
+        homeAdvantage: Boolean
+    ): Int {
+        val homeMid = homeStrength.midfield * home.tactics.style.possessionBias
+        val awayMid = awayStrength.midfield * away.tactics.style.possessionBias
+        val adv = if (homeAdvantage) 1.05 else 1.0
+        val total = (homeMid * adv) + awayMid
+        if (total <= 0.0) return 50
+        val share = (homeMid * adv) / total
+        // Compress toward 50% so possession never looks absurd.
+        val compressed = 0.5 + (share - 0.5) * 0.72
+        return (compressed * 100).roundToInt().coerceIn(28, 72)
+    }
+
+    /**
+     * Poisson-style expected goals. The core is the ratio of a side's attack to
+     * the opponent's defence+keeper, which makes squad quality the dominant
+     * factor while still allowing tactical swings.
+     */
+    private fun expectedGoals(
+        attack: Double,
+        opponentDefence: Double,
+        opponentKeeper: Double,
+        tactics: Tactics,
+        possessionShare: Double,
+        homeAdvantage: Boolean
+    ): Double {
+        val defensiveResistance = opponentDefence * 0.72 + opponentKeeper * 0.28
+        val ratio = (attack.coerceAtLeast(20.0)) / defensiveResistance.coerceAtLeast(20.0)
+        // Elasticity < 1 keeps the scorelines realistic for large quality gaps.
+        val qualityFactor = ratio.pow(1.55)
+
+        var xg = BASE_XG * qualityFactor
+        xg *= tactics.mentality.attackModifier
+        xg *= tactics.style.chanceQualityBias
+        xg *= tactics.tempo.chanceVolume
+        // Dominating the ball helps, but with diminishing returns.
+        xg *= 0.86 + possessionShare * 0.28
+        // A high line against a strong attack invites chances; a deep line denies them.
+        xg *= 0.92 + (tactics.defensiveLine.pressingHeight - 1.0) * 0.25
+
+        if (homeAdvantage) xg *= (1.0 + HOME_ADVANTAGE * 0.35)
+
+        return xg.coerceIn(0.18, 4.6)
+    }
+
+    /**
+     * Draws a goal count from the expected-goals rate. [determinism] above 1.0
+     * flattens the distribution toward the expectation (used for Easy difficulty
+     * so player decisions matter more), below 1.0 adds variance.
+     */
+    private fun drawGoals(xg: Double, random: Random, determinism: Double): Int {
+        val d = determinism.coerceIn(0.6, 1.8)
+        // Knuth's Poisson sampler, with the rate scaled by determinism.
+        val lambda = xg.pow(1.0 / d) * if (d > 1.0) xg.pow(1.0 - 1.0 / d) else 1.0
+        val effectiveLambda = lambda.coerceIn(0.15, 5.0)
+        val limit = exp(-effectiveLambda)
+        var k = 0
+        var p = 1.0
+        do {
+            k++
+            p *= random.nextDouble()
+        } while (p > limit && k < 12)
+        return (k - 1).coerceAtLeast(0)
+    }
+
+    /** Goal minutes, spread realistically across the match. */
+    private fun drawMinutes(count: Int, random: Random): List<Int> =
+        (0 until count).map {
+            // Slight bias toward the later stages of each half.
+            val half = if (random.nextDouble() < 0.54) 1 else 2
+            val minute = if (half == 1) {
+                (random.nextDouble().pow(0.85) * 45).toInt() + 1
+            } else {
+                46 + (random.nextDouble().pow(0.85) * 49).toInt()
+            }
+            minute.coerceIn(1, MINUTES + 6)
+        }.sorted()
+
+    private fun pickAttacker(players: List<MatchPlayer>, random: Random): MatchPlayer? {
+        val candidates = players.filter { !it.isGoalkeeper }
+        if (candidates.isEmpty()) return null
+        val weights = candidates.map { max(0.05, it.attackWeight * it.confidenceFactor) }
+        return weightedPick(candidates, weights, random)
+    }
+
+    private fun pickAssister(
+        players: List<MatchPlayer>,
+        scorer: MatchPlayer?,
+        random: Random
+    ): MatchPlayer? {
+        val candidates = players.filter { !it.isGoalkeeper && it.id != scorer?.id }
+        if (candidates.isEmpty()) return null
+        // Roughly two thirds of goals are assisted.
+        if (random.nextDouble() > 0.68) return null
+        val weights = candidates.map { max(0.05, it.creativityWeight) }
+        return weightedPick(candidates, weights, random)
+    }
+
+    private fun pickDefensivePlayer(players: List<MatchPlayer>, random: Random): MatchPlayer? {
+        val candidates = players.filter { !it.isGoalkeeper }
+        if (candidates.isEmpty()) return null
+        // Fouls cluster among defenders and midfielders.
+        val weights = candidates.map { max(0.1, it.defensiveWeight) }
+        return weightedPick(candidates, weights, random)
+    }
+
+    private fun pickOutfielder(players: List<MatchPlayer>, random: Random): MatchPlayer? {
+        val candidates = players.filter { !it.isGoalkeeper }
+        if (candidates.isEmpty()) return null
+        return candidates[random.nextInt(candidates.size)]
+    }
+
+    private fun <T> weightedPick(items: List<T>, weights: List<Double>, random: Random): T? {
+        if (items.isEmpty()) return null
+        val total = weights.sum()
+        if (total <= 0.0) return items[random.nextInt(items.size)]
+        var roll = random.nextDouble() * total
+        for (i in items.indices) {
+            roll -= weights[i]
+            if (roll <= 0.0) return items[i]
+        }
+        return items.last()
+    }
+
+    private fun drawFouls(tactics: Tactics, strength: TeamStrength, random: Random): Int {
+        val base = 11.0
+        val tempoFactor = tactics.tempo.errorRate
+        val pressFactor = if (tactics.style == com.footymanager.simulator.domain.model.PlayStyle.HIGH_PRESS) 1.18 else 1.0
+        val lineFactor = 0.9 + tactics.defensiveLine.pressingHeight * 0.12
+        val mean = base * tempoFactor * pressFactor * lineFactor
+        return poisson(mean, random).coerceIn(3, 26)
+    }
+
+    private fun drawCards(fouls: Int, tactics: Tactics, random: Random, isHome: Boolean): Int {
+        // Roughly one booking per six fouls, nudged by mentality and home bias.
+        val base = fouls / 6.0
+        val aggression = if (tactics.mentality == com.footymanager.simulator.domain.model.Mentality.VERY_ATTACKING) 1.15 else 1.0
+        val homeBias = if (isHome) 0.92 else 1.08
+        return poisson(base * aggression * homeBias, random).coerceIn(0, 6)
+    }
+
+    private fun drawReds(tactics: Tactics, random: Random): Int {
+        val p = 0.035 * tactics.tempo.errorRate
+        return if (random.nextDouble() < p) 1 else 0
+    }
+
+    private fun drawInjuries(tactics: Tactics, fouls: Int, random: Random): Int {
+        // High pressing and fast tempo raise injury risk; fouls suffered raise it further.
+        var p = 0.09 * tactics.style.fatigueBias * tactics.tempo.errorRate
+        p += fouls * 0.0016
+        return if (random.nextDouble() < p) 1 else 0
+    }
+
+    private fun shotsFor(goals: Int, xg: Double, tactics: Tactics, random: Random): Int {
+        val base = goals * 2.2 + xg * 7.4
+        val volume = tactics.tempo.chanceVolume
+        val shots = base * volume + random.nextDouble(-2.0, 2.5)
+        return shots.roundToInt().coerceAtLeast(goals).coerceIn(2, 34)
+    }
+
+    private fun onTargetFor(goals: Int, shots: Int, random: Random): Int {
+        val ratio = 0.34 + random.nextDouble(-0.05, 0.08)
+        return (shots * ratio).roundToInt().coerceIn(goals, shots)
+    }
+
+    private fun cornersFor(xg: Double, possession: Int, random: Random): Int {
+        val base = 3.2 + xg * 2.1 + (possession - 50) * 0.035
+        return poisson(base.coerceAtLeast(0.8), random).coerceIn(0, 16)
+    }
+
+    private fun passAccuracy(
+        tactics: Tactics,
+        possession: Int,
+        strength: TeamStrength,
+        opponent: TeamStrength,
+        random: Random
+    ): Int {
+        var acc = 74.0
+        acc += tactics.style.possessionBias * 3.4 - 3.4
+        acc += (strength.midfield - opponent.midfield) * 0.18
+        acc += (possession - 50) * 0.08
+        acc += random.nextDouble(-2.2, 2.2)
+        return acc.roundToInt().coerceIn(58, 94)
+    }
+
+    private fun poisson(mean: Double, random: Random): Int {
+        if (mean <= 0.0) return 0
+        val limit = exp(-mean)
+        var k = 0
+        var p = 1.0
+        do {
+            k++
+            p *= random.nextDouble()
+        } while (p > limit && k < 30)
+        return k - 1
+    }
+
+    private fun round1(v: Double): Double = (v * 10).roundToInt() / 10.0
+
+    private fun defaultSubstitutions(
+        onPitch: List<MatchPlayer>,
+        selection: TeamSelection,
+        squadById: Map<Long, Player>,
+        random: Random
+    ): List<MatchEvent> {
+        if (selection.substitutes.isEmpty()) return emptyList()
+        val events = mutableListOf<MatchEvent>()
+        val bench = selection.substitutes.mapNotNull { squadById[it] }
+        if (bench.isEmpty()) return emptyList()
+
+        val subCount = 1 + random.nextInt(3)
+        val usedSubs = mutableSetOf<Long>()
+        val onPitchIds = onPitch.map { it.id }.toMutableSet()
+
+        repeat(subCount) {
+            val off = onPitch.filter { !it.isGoalkeeper && it.id in onPitchIds && it.id !in usedSubs }
+                .randomOrNull(random) ?: return@repeat
+            val on = bench.filter { it.id !in usedSubs && it.id !in onPitchIds }
+                .randomOrNull(random) ?: return@repeat
+            usedSubs += off.id
+            usedSubs += on.id
+            onPitchIds.remove(off.id)
+            onPitchIds.add(on.id)
+            events += MatchEvent(
+                minute = random.nextInt(55, 88),
+                type = MatchEventType.SUBSTITUTION,
+                clubId = 0L,
+                playerId = on.id,
+                playerName = on.name,
+                secondaryPlayerId = off.id,
+                secondaryPlayerName = off.name,
+                detail = "${on.name} replaces ${off.name}"
+            )
+        }
+        return events
+    }
+}
+
+private fun <T> List<T>.randomOrNull(random: Random): T? =
+    if (isEmpty()) null else this[random.nextInt(size)]

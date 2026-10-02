@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pitch-dark sports management base. Compose supplies the full theme;
+         these values back the window + splash so there is no white flash. -->
+    <style name="Theme.FootballManager" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/pitch_background</item>
+        <item name="android:statusBarColor">@color/pitch_background</item>
+        <item name="android:navigationBarColor">@color/pitch_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.FootballManager.Splash" parent="Theme.FootballManager">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+    </style>
+</resources>

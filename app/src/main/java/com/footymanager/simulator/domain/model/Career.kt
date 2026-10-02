@@ -1,0 +1,144 @@
+package com.footymanager.simulator.domain.model
+
+import kotlinx.serialization.Serializable
+
+@Serializable
+enum class GamePhase {
+    PRE_SEASON,
+    IN_SEASON,
+    SEASON_ENDED
+}
+
+@Serializable
+data class TransferWindowState(
+    /** Matchday index (0-based) at which the summer window closes. */
+    val summerClosesAfterMatchday: Int = 3,
+    /** Matchday index (0-based) after which the winter window opens. */
+    val winterOpensAfterMatchday: Int = 17,
+    val winterClosesAfterMatchday: Int = 21
+) {
+    fun isOpen(currentMatchdayIndex: Int): Boolean =
+        currentMatchdayIndex < summerClosesAfterMatchday ||
+            (currentMatchdayIndex > winterOpensAfterMatchday &&
+                currentMatchdayIndex <= winterClosesAfterMatchday)
+
+    fun label(currentMatchdayIndex: Int): String = when {
+        currentMatchdayIndex < summerClosesAfterMatchday -> "Summer window open"
+        currentMatchdayIndex in (winterOpensAfterMatchday + 1)..winterClosesAfterMatchday ->
+            "Winter window open"
+        else -> "Window closed"
+    }
+}
+
+/**
+ * The complete serialized save game. Everything the player can change lives here
+ * so persistence is a single atomic write.
+ */
+@Serializable
+data class Career(
+    val saveVersion: Int = SAVE_VERSION,
+    val saveId: String,
+    val managerName: String,
+    val userClubId: Long,
+    val season: String,
+    val seasonNumber: Int,
+    val difficulty: Difficulty,
+    val date: GameDate,
+    val phase: GamePhase = GamePhase.IN_SEASON,
+    /** 0-based index into the current season's matchday list. */
+    val matchdayIndex: Int = 0,
+    val tactics: Tactics = Tactics.DEFAULT,
+    val trainingFocus: TrainingFocus = TrainingFocus.BALANCED,
+    val selection: TeamSelection = TeamSelection(),
+    val clubs: List<Club>,
+    val players: List<Player>,
+    val fixtures: List<Match>,
+    val table: Map<String, List<TableRow>>,
+    val results: List<MatchResult> = emptyList(),
+    val news: List<NewsItem> = emptyList(),
+    val ledger: List<FinanceLedgerEntry> = emptyList(),
+    val board: BoardState = BoardState(),
+    val pendingOffers: List<TransferOffer> = emptyList(),
+    val lastSeasonSummary: SeasonSummary? = null,
+    val transferWindow: TransferWindowState = TransferWindowState(),
+    val awards: List<AwardRecord> = emptyList(),
+    val transferSpendThisSeason: Long = 0L,
+    val transferIncomeThisSeason: Long = 0L,
+    val idCounter: Long = 1L,
+    val createdAtEpochMs: Long = 0L,
+    val lastSavedEpochMs: Long = 0L
+) {
+    val userClub: Club
+        get() = clubs.first { it.id == userClubId }
+
+    fun club(id: Long): Club? = clubs.firstOrNull { it.id == id }
+
+    fun clubOrThrow(id: Long): Club = club(id) ?: error("Unknown club $id")
+
+    fun player(id: Long): Player? = players.firstOrNull { it.id == id }
+
+    fun squadOf(clubId: Long): List<Player> =
+        players.filter { it.clubId == clubId }.sortedBy { Position.sortOrder(it.position) }
+
+    val userSquad: List<Player> get() = squadOf(userClubId)
+
+    fun leagueTable(leagueId: String): List<TableRow> = table[leagueId].orEmpty()
+
+    /** Table rows for a league ordered with standard football tiebreakers. */
+    fun sortedTable(leagueId: String): List<TableRow> =
+        leagueTable(leagueId).sortedWith(TableRow.comparator)
+
+    fun positionOf(clubId: Long, leagueId: String): Int {
+        val sorted = sortedTable(leagueId)
+        val idx = sorted.indexOfFirst { it.clubId == clubId }
+        return if (idx < 0) 0 else idx + 1
+    }
+
+    val userLeagueId: String get() = userClub.leagueId
+
+    val userLeaguePosition: Int get() = positionOf(userClubId, userLeagueId)
+
+    fun nextMatch(): Match? =
+        fixtures.filter { it.leagueId == userLeagueId && !it.isPlayed && it.involves(userClubId) }
+            .minByOrNull { it.matchday }
+
+    fun fixturesForClub(clubId: Long): List<Match> =
+        fixtures.filter { it.involves(clubId) }.sortedBy { it.matchday }
+
+    fun resultsForClub(clubId: Long): List<Match> =
+        fixturesForClub(clubId).filter { it.isPlayed }
+
+    fun leagueMatchesFor(leagueId: String, matchday: Int): List<Match> =
+        fixtures.filter { it.leagueId == leagueId && it.matchday == matchday }
+
+    /** Most recent results first, capped at [count]. */
+    fun recentForm(clubId: Long, count: Int = 5): List<Match> =
+        resultsForClub(clubId).takeLast(count).reversed()
+
+    /**
+     * Number of matchdays in the user's own league. Leagues have different sizes,
+     * so this must be scoped to the competition the player is actually in rather
+     * than the longest schedule in the world.
+     */
+    fun totalMatchdays(): Int =
+        fixtures.filter { it.leagueId == userLeagueId }
+            .maxOfOrNull { it.matchday }
+            ?: fixtures.maxOfOrNull { it.matchday }
+            ?: 0
+
+    fun nextMatchdayNumber(): Int = (matchdayIndex + 1).coerceAtMost(totalMatchdays().coerceAtLeast(1))
+
+    fun wageBill(clubId: Long): Long = players.filter { it.clubId == clubId }.sumOf { it.wagePerWeek }
+
+    fun totalGoalsFor(clubId: Long): Int =
+        fixtures.filter { it.isPlayed && it.homeClubId == clubId }.sumOf { it.homeGoals } +
+            fixtures.filter { it.isPlayed && it.awayClubId == clubId }.sumOf { it.awayGoals }
+
+    fun nextId(): Long = idCounter + 1
+
+    companion object {
+        const val SAVE_VERSION = 1
+        const val CURRENT_SEASON = "2026/27"
+        const val NEXT_SEASON = "2027/28"
+    }
+}
