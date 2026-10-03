@@ -184,33 +184,17 @@ fun positionColor(position: Position): Color = when (position) {
     Position.RW, Position.LW, Position.ST -> Color(0xFFE5484D)
 }
 
-/** Club crest placeholder: initials on a two-tone shield. */
+/**
+ * Club crest: delegates to the original [ClubBadge] vector system, which draws a
+ * per-club shape and graphic variant with automatic contrast. Kept as a named
+ * entry point so existing call sites keep working.
+ */
 @Composable
 fun ClubCrest(club: Club, size: Dp = 40.dp, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(RoundedCornerShape(size / 3.2f))
-            .background(Color(club.primaryColor)),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(size / 4.2f)
-                .align(Alignment.BottomCenter)
-                .background(Color(club.secondaryColor).copy(alpha = 0.85f))
-        )
-        Text(
-            text = club.crestInitials,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Black,
-            color = contrastColorFor(club.primaryColor)
-        )
-    }
+    ClubBadge(club = club, size = size, modifier = modifier)
 }
 
-private fun contrastColorFor(argb: Int): Color {
+fun contrastColorFor(argb: Int): Color {
     val r = (argb shr 16) and 0xFF
     val g = (argb shr 8) and 0xFF
     val b = argb and 0xFF

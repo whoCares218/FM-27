@@ -151,7 +151,14 @@ class SeasonSystemsTest {
 
     @Test
     fun `stadium expansion increases capacity once complete`() {
-        var career = newCareer()
+        // Pick a club whose ground can still be expanded; some elite clubs start
+        // at the top stadium level, which is correct and simply cannot grow.
+        val expandable = ClubDatabase.buildAll().first { club ->
+            com.footymanager.simulator.domain.model.Stadium
+                .initial(club.stadiumName, club.stadiumCapacity, club.reputation)
+                .canExpand
+        }
+        var career = newCareer(expandable.id)
         val before = career.stadium.capacity
         val random = Random(16)
         // Force an expansion and run the clock forward until it completes.

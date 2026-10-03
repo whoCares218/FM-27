@@ -199,7 +199,11 @@ class GameViewModelTest {
         vm.setTempo(Tempo.FAST)
         vm.setTrainingFocus(TrainingFocus.DEFENCE)
 
-        awaitIdle { savedOnDisk()?.tactics?.formationId == "3-5-2" }
+        awaitIdle {
+            savedOnDisk()?.tactics?.formationId == "3-5-2" &&
+                savedOnDisk()?.trainingFocus == TrainingFocus.DEFENCE &&
+                savedOnDisk()?.tactics?.tempo == Tempo.FAST
+        }
 
         val restored = savedOnDisk()!!
         assertEquals("3-5-2", restored.tactics.formationId)
@@ -433,5 +437,41 @@ class GameViewModelTest {
             GamePhase.SEASON_ENDED,
             vm.career.value!!.phase
         )
+    }
+
+    @Test
+    fun `swapping two tactical slots exchanges the two players`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        vm.autoPickSelection()
+        awaitIdle { vm.career.value!!.selection.startingXi.size == 11 }
+
+        val before = vm.career.value!!.selection.startingXi.associate { it.slotIndex to it.playerId }
+        val a = before.keys.min()
+        val b = before.keys.max()
+
+        vm.swapSlots(a, b)
+        awaitIdle {
+            val now = vm.career.value!!.selection.startingXi.associate { it.slotIndex to it.playerId }
+            now[a] == before[b] && now[b] == before[a]
+        }
+
+        val after = vm.career.value!!.selection.startingXi.associate { it.slotIndex to it.playerId }
+        assertEquals("Slot A should now hold B's player", before[b], after[a])
+        assertEquals("Slot B should now hold A's player", before[a], after[b])
+        assertEquals("No player should be lost", 11, after.size)
+    }
+
+    @Test
+    fun `swapping a slot with itself leaves the lineup unchanged`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        vm.autoPickSelection()
+        awaitIdle { vm.career.value!!.selection.startingXi.size == 11 }
+
+        val before = vm.career.value!!.selection.startingXi
+        vm.swapSlots(3, 3)
+        Thread.sleep(120)
+        assertEquals(before, vm.career.value!!.selection.startingXi)
     }
 }

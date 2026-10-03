@@ -2,6 +2,22 @@ package com.footymanager.simulator.domain.model
 
 import kotlinx.serialization.Serializable
 
+/**
+ * The outline used when drawing a club badge. Each club picks one so that no two
+ * neighbouring clubs look alike, and every badge is an original graphic rather
+ * than a copy of a real crest.
+ */
+@Serializable
+enum class BadgeShape {
+    SHIELD,
+    CIRCLE,
+    ROUNDEL,
+    HEXAGON,
+    DIAMOND,
+    PENNANT,
+    CREST
+}
+
 @Serializable
 data class Club(
     val id: Long,
@@ -20,17 +36,39 @@ data class Club(
     val boardExpectation: String,
     /** Minimum acceptable league position for the board. */
     val targetLeaguePosition: Int,
-    /** Kit colours used for the crest placeholder, as 0xRRGGBB values. */
+    /** Kit colours used for the badge, as 0xRRGGBB values. */
     val primaryColor: Int,
     val secondaryColor: Int,
-    val formationId: String = Formation.F4231.id
+    val formationId: String = Formation.F4231.id,
+    /** Home city, shown on the club profile. */
+    val city: String = "",
+    /** Traditional nickname, shown on the club profile. */
+    val nickname: String = "",
+    /** Outline of this club's original badge. */
+    val badgeShape: BadgeShape = BadgeShape.SHIELD,
+    /**
+     * Badge graphic variant (0..5). Combined with the club colours and shape this
+     * gives every club a distinct visual identity without shipping any artwork.
+     */
+    val badgeStyle: Int = 0,
+    /** The club's traditional rival, resolved by name at database build time. */
+    val rivalClubId: Long? = null
 ) {
+    /** Up to three letters shown inside the badge; falls back to the club name. */
     val crestInitials: String
-        get() = name.split(" ")
-            .filter { it.isNotBlank() }
-            .take(2)
-            .joinToString("") { it.first().uppercase() }
-            .ifBlank { shortName.take(2).uppercase() }
+        get() {
+            val explicit = shortName.filter { it.isLetter() }.uppercase()
+            if (explicit.isNotEmpty()) return explicit.take(3)
+            return name.split(" ")
+                .filter { it.isNotBlank() }
+                .take(2)
+                .joinToString("") { it.first().uppercase() }
+                .ifBlank { name.take(2).uppercase() }
+        }
+
+    /** A short label for tight layouts. */
+    val displayShort: String
+        get() = if (nickname.isNotBlank()) nickname else name
 
     companion object {
         const val USER_CLUB_ID = -1L
@@ -60,6 +98,8 @@ data class League(
             "ITA1" -> "Serie A"
             "GER1" -> "Bundesliga"
             "FRA1" -> "Ligue 1"
+            "POR1" -> "Primeira"
+            "NED1" -> "Eredivisie"
             else -> name
         }
 
@@ -94,6 +134,16 @@ data class League(
             relegationPlaces = 3, championsLeaguePlaces = 3,
             prizeMoneyPerPlace = 2_100_000L, tier = 1
         )
+        val PRIMEIRA = League(
+            id = "POR1", name = "Primeira Liga", country = "Portugal", reputation = 80,
+            relegationPlaces = 3, championsLeaguePlaces = 2,
+            prizeMoneyPerPlace = 1_400_000L, tier = 1
+        )
+        val EREDIVISIE = League(
+            id = "NED1", name = "Eredivisie", country = "Netherlands", reputation = 80,
+            relegationPlaces = 3, championsLeaguePlaces = 2,
+            prizeMoneyPerPlace = 1_500_000L, tier = 1
+        )
 
         /**
          * The Champions League is a continental competition, not a domestic
@@ -107,7 +157,8 @@ data class League(
         )
 
         val all: List<League> = listOf(
-            PREMIER_LEAGUE, CHAMPIONSHIP, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1
+            PREMIER_LEAGUE, CHAMPIONSHIP, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1,
+            PRIMEIRA, EREDIVISIE
         )
 
         /** Leagues that play a domestic round-robin schedule. */

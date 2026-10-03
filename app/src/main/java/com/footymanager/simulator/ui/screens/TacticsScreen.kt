@@ -1,8 +1,11 @@
 package com.footymanager.simulator.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +15,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +42,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,6 +98,7 @@ fun TacticsScreen(
     onAutoPick: () -> Unit,
     onAssignSlot: (Int, Long) -> Unit,
     onRemoveFromSlot: (Int) -> Unit,
+    onSwapSlots: (Int, Int) -> Unit,
     onSetCaptain: (Long?) -> Unit,
     onToggleSubstitute: (Long) -> Unit
 ) {
@@ -199,12 +209,13 @@ fun TacticsScreen(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                PitchView(
+                TacticalBoard(
                     formation = formation,
                     selection = career.selection,
                     byId = byId,
                     captainId = career.selection.captainId,
-                    onSlotClick = { pickerSlot = it }
+                    onSlotClick = { pickerSlot = it },
+                    onSwapSlots = onSwapSlots
                 )
             }
         }
@@ -504,83 +515,191 @@ private fun AdvancedInstructionsCard(tactics: Tactics, onApply: (Tactics) -> Uni
 }
 
 /**
- * Vertical pitch with positioned slots. Uses weighted rows so it scales cleanly
- * from small phones to tablets without any hard-coded pixel positions.
+ * The interactive tactical board.
+ *
+ * Every token is draggable: dragging one token onto another swaps the two
+ * players, and dragging a token into empty space nudges it to a nearby slot.
+ * A single tap opens the picker for that position. The board shows each player's
+ * rating, condition and role, and highlights anyone playing out of position.
+ *
+ * The gesture model is deliberately simple: on release we find the slot nearest
+ * the token's centre and treat that as the drop target. This works reliably for
+ * thumbs on a phone without needing precise hit-testing during the drag.
  */
 @Composable
-private fun PitchView(
+private fun TacticalBoard(
     formation: Formation,
     selection: com.footymanager.simulator.domain.model.TeamSelection,
     byId: Map<Long, Player>,
     captainId: Long?,
-    onSlotClick: (Int) -> Unit
+    onSlotClick: (Int) -> Unit,
+    onSwapSlots: (Int, Int) -> Unit
 ) {
-    // Group slot indices into the pitch's horizontal lines, from defence upward.
-    val lines = remember(formation) { formation.pitchLines() }
+    val slots = remember(formation) {
+        formation.coordinates.mapIndexed { index, point -> index to point }
+    }
+    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var hoverTarget by remember { mutableStateOf<Int?>(null) }
 
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.78f)
+            .aspectRatio(0.72f)
             .clip(MaterialTheme.shapes.medium)
             .background(com.footymanager.simulator.ui.theme.PitchGreen)
-            .padding(8.dp),
-        verticalArrangement = Arrangement.SpaceEvenly
     ) {
-        lines.reversed().forEach { line ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                line.forEach { slotIndex ->
-                    val slot = selection.startingXi.firstOrNull { it.slotIndex == slotIndex }
-                    val player = slot?.let { byId[it.playerId] }
-                    PitchSlot(
-                        role = formation.roles[slotIndex],
-                        player = player,
-                        outOfPosition = slot?.outOfPosition == true,
-                        isCaptain = player?.id == captainId,
-                        onClick = { onSlotClick(slotIndex) }
+        val w = maxWidth.value
+        val h = maxHeight.value
+
+        // Pitch markings for a tactical-board look.
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth(0.90f)
+                .height(1.dp)
+                .background(Color.White.copy(alpha = 0.22f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(64.dp)
+                .border(1.dp, Color.White.copy(alpha = 0.20f), CircleShape)
+        )
+        // Penalty boxes at each end.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth(0.46f)
+                .height(h.dp * 0.14f)
+                .border(1.dp, Color.White.copy(alpha = 0.18f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(0.46f)
+                .height(h.dp * 0.14f)
+                .border(1.dp, Color.White.copy(alpha = 0.18f))
+        )
+
+        slots.forEach { (index, point) ->
+            val slot = selection.startingXi.firstOrNull { it.slotIndex == index }
+            val player = slot?.let { byId[it.playerId] }
+            val baseX = (point.x * w)
+            // Flip so the attacking line sits at the top of the screen.
+            val baseY = ((1f - point.y) * h)
+            val isDragging = draggingIndex == index
+            val isTarget = hoverTarget == index && draggingIndex != index
+
+            TacticalToken(
+                role = formation.roles[index],
+                player = player,
+                outOfPosition = slot?.outOfPosition == true,
+                isCaptain = player?.id == captainId,
+                isDragging = isDragging,
+                isDropTarget = isTarget,
+                modifier = Modifier
+                    .offset(
+                        x = (baseX - 30f).dp + (if (isDragging) dragOffset.x.dp else 0.dp),
+                        y = (baseY - 34f).dp + (if (isDragging) dragOffset.y.dp else 0.dp)
                     )
-                }
-            }
+                    .zIndex(if (isDragging) 2f else 1f)
+                    .pointerInput(index) {
+                        detectDragGestures(
+                            onDragStart = {
+                                draggingIndex = index
+                                dragOffset = androidx.compose.ui.geometry.Offset.Zero
+                            },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                dragOffset += amount
+                                hoverTarget = nearestSlot(
+                                    baseX + dragOffset.x, baseY + dragOffset.y, slots, w, h
+                                ).takeIf { it != index }
+                            },
+                            onDragEnd = {
+                                val target = hoverTarget
+                                if (target != null) onSwapSlots(index, target)
+                                draggingIndex = null
+                                dragOffset = androidx.compose.ui.geometry.Offset.Zero
+                                hoverTarget = null
+                            },
+                            onDragCancel = {
+                                draggingIndex = null
+                                dragOffset = androidx.compose.ui.geometry.Offset.Zero
+                                hoverTarget = null
+                            }
+                        )
+                    }
+                    .clickable { onSlotClick(index) }
+            )
         }
     }
 }
 
+/** Finds the slot whose pitch position is closest to a screen point. */
+private fun nearestSlot(
+    x: Float,
+    y: Float,
+    slots: List<Pair<Int, com.footymanager.simulator.domain.model.PitchPoint>>,
+    width: Float,
+    height: Float
+): Int? {
+    if (slots.isEmpty()) return null
+    return slots.minByOrNull { (_, point) ->
+        val sx = point.x * width
+        val sy = (1f - point.y) * height
+        val dx = sx - x
+        val dy = sy - y
+        dx * dx + dy * dy
+    }?.first
+}
+
+/**
+ * A single player token on the tactical board. The circular badge shows the
+ * player's overall rating coloured by quality; the role tag, condition and
+ * out-of-position flag sit beneath it.
+ */
 @Composable
-private fun PitchSlot(
+private fun TacticalToken(
     role: com.footymanager.simulator.domain.model.SlotRole,
     player: Player?,
     outOfPosition: Boolean,
     isCaptain: Boolean,
-    onClick: () -> Unit
+    isDragging: Boolean,
+    isDropTarget: Boolean,
+    modifier: Modifier = Modifier
 ) {
+    val scale by animateFloatAsState(
+        targetValue = if (isDragging) 1.12f else 1f,
+        animationSpec = tween(120),
+        label = "tokenScale"
+    )
+    val ringColor = when {
+        isDropTarget -> StatColors.elite
+        outOfPosition -> StatColors.poor
+        player != null -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    }
+
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .width(62.dp)
-            .clip(MaterialTheme.shapes.small)
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp, horizontal = 2.dp)
+        modifier = modifier
+            .width(60.dp)
+            .scale(scale),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(contentAlignment = Alignment.TopEnd) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
                     .background(
-                        if (player != null) MaterialTheme.colorScheme.surface
-                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.35f)
+                        if (player != null) StatColors.forRating(player.overall).copy(alpha = 0.92f)
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.30f)
                     )
                     .border(
-                        width = if (outOfPosition) 2.dp else 1.dp,
-                        color = when {
-                            outOfPosition -> StatColors.poor
-                            player != null -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        },
+                        width = if (isDropTarget || outOfPosition) 2.dp else 1.5.dp,
+                        color = ringColor,
                         shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
@@ -588,9 +707,8 @@ private fun PitchSlot(
                 Text(
                     text = player?.overall?.toString() ?: "+",
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (player != null) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF0B1220)
                 )
             }
             if (isCaptain) {
@@ -599,16 +717,16 @@ private fun PitchSlot(
                     contentDescription = "Captain",
                     tint = StatColors.elite,
                     modifier = Modifier
-                        .size(13.dp)
-                        .offsetAbove()
+                        .size(14.dp)
+                        .offset(x = 2.dp, y = (-2).dp)
                 )
             }
         }
-        Spacer(Modifier.height(3.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
             text = player?.name?.substringAfterLast(' ') ?: role.short,
             style = MaterialTheme.typography.labelSmall,
-            color = androidx.compose.ui.graphics.Color.White,
+            color = Color.White,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -616,20 +734,16 @@ private fun PitchSlot(
         )
         Text(
             text = if (player != null) {
-                "${player.fitness}%"
+                "${role.short} · ${player.fitness}%"
             } else role.longName,
             style = MaterialTheme.typography.labelSmall,
-            color = if (player != null && player.fitness < 65) StatColors.poor
-            else androidx.compose.ui.graphics.Color.White.copy(alpha = 0.75f),
+            color = if (outOfPosition) StatColors.poor
+            else Color.White.copy(alpha = 0.78f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
     }
 }
-
-private fun Modifier.offsetAbove(): Modifier = this.then(
-    androidx.compose.ui.Modifier.padding(bottom = 22.dp, start = 20.dp)
-)
 
 @Composable
 private fun BenchRow(player: Player, onRemove: () -> Unit) {

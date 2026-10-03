@@ -145,6 +145,7 @@ class ScreenRenderTest {
                 onAutoPick = {},
                 onAssignSlot = { _, _ -> },
                 onRemoveFromSlot = {},
+                onSwapSlots = { _, _ -> },
                 onSetCaptain = {},
                 onToggleSubstitute = {}
             )

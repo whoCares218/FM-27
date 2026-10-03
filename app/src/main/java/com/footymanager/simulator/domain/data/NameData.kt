@@ -64,6 +64,28 @@ object NameData {
         "Lefebvre", "Faure", "Andre", "Mercier", "Blanc", "Guerin", "Boyer", "Garnier", "Chevalier", "Francois"
     )
 
+    private val portugueseFirst = listOf(
+        "Joao", "Rui", "Miguel", "Pedro", "Tiago", "Andre", "Diogo", "Bernardo", "Goncalo", "Vitor",
+        "Rafael", "Bruno", "Nuno", "Ricardo", "Fabio", "Hugo", "Rodrigo", "Afonso", "Duarte", "Francisco",
+        "Salvador", "Lucas", "David", "Ivo", "Marco", "Tomas", "Simao", "Alexandre", "Gustavo", "Martim"
+    )
+    private val portugueseLast = listOf(
+        "Silva", "Santos", "Ferreira", "Pereira", "Oliveira", "Costa", "Rodrigues", "Martins", "Sousa", "Fernandes",
+        "Goncalves", "Gomes", "Lopes", "Marques", "Alves", "Almeida", "Ribeiro", "Pinto", "Carvalho", "Teixeira",
+        "Moreira", "Correia", "Mendes", "Nunes", "Soares", "Vieira", "Monteiro", "Cardoso", "Rocha", "Neves"
+    )
+
+    private val dutchFirst = listOf(
+        "Daan", "Sem", "Lucas", "Finn", "Bram", "Jesse", "Thijs", "Ruben", "Sven", "Tim",
+        "Milan", "Luuk", "Joris", "Koen", "Stijn", "Rick", "Bas", "Niels", "Teun", "Joep",
+        "Wout", "Cas", "Sep", "Gijs", "Jurriën", "Ryan", "Cody", "Xavi", "Ryan", "Mees"
+    )
+    private val dutchLast = listOf(
+        "de Jong", "van Dijk", "de Vries", "Jansen", "Bakker", "Visser", "Smit", "Meijer", "de Boer", "Mulder",
+        "de Groot", "Bos", "Vos", "Peters", "Hendriks", "van Leeuwen", "Dekker", "Brouwer", "de Wit", "Dijkstra",
+        "Smits", "de Graaf", "van der Meer", "van den Berg", "Timmer", "Willems", "Kuipers", "Vermeer", "van Dijk", "Post"
+    )
+
     /** African / South American names add squad diversity to European leagues. */
     private val internationalFirst = listOf(
         "Kofi", "Kwame", "Chidi", "Emeka", "Tunde", "Sekou", "Amadou", "Ibrahim", "Youssef", "Anas",
@@ -94,6 +116,8 @@ object NameData {
         "Italy" -> NamePool(italianFirst, italianLast)
         "Germany" -> NamePool(germanFirst, germanLast)
         "France" -> NamePool(frenchFirst, frenchLast)
+        "Portugal" -> NamePool(portugueseFirst, portugueseLast)
+        "Netherlands" -> NamePool(dutchFirst, dutchLast)
         else -> NamePool(englishFirst, englishLast)
     }
 

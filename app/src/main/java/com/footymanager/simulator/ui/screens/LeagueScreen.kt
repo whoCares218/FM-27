@@ -149,7 +149,8 @@ fun CompetitionHubScreen(
 @Composable
 fun LeagueScreen(
     career: Career,
-    onOpenFixtures: () -> Unit
+    onOpenFixtures: () -> Unit,
+    onOpenClub: (Long) -> Unit = {}
 ) {
     var selectedLeagueId by remember { mutableStateOf(career.userLeagueId) }
     val league = League.byId(selectedLeagueId)
@@ -192,7 +193,7 @@ fun LeagueScreen(
                         career = career,
                         league = league,
                         isUserClub = row.clubId == career.userClubId,
-                        onClick = null
+                        onClick = { onOpenClub(row.clubId) }
                     )
                 }
             }

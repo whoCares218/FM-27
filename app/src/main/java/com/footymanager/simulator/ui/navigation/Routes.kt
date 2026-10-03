@@ -32,6 +32,7 @@ object Routes {
     const val MORE = "more"
 
     const val PLAYER_DETAIL = "player/{playerId}"
+    const val CLUB_PROFILE = "club/{clubId}"
     const val MATCH_DAY = "match_day"
     const val SEASON_SUMMARY = "season_summary"
     const val FINANCES = "finances"
@@ -46,6 +47,8 @@ object Routes {
     const val REWARDS = "rewards"
 
     fun playerDetail(playerId: Long) = "player/$playerId"
+
+    fun clubProfile(clubId: Long) = "club/$clubId"
 }
 
 /** The six tabs of the bottom navigation bar. */

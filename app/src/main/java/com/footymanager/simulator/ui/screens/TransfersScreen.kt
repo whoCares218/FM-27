@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -78,11 +80,28 @@ fun TransfersScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var positionFilter by remember { mutableStateOf<Position?>(null) }
+    var sort by remember { mutableStateOf(MarketSort.RATING) }
+    var affordableOnly by remember { mutableStateOf(false) }
+    var shortlist by remember { mutableStateOf(emptySet<Long>()) }
     var negotiatingPlayerId by remember { mutableStateOf<Long?>(null) }
     var sellingPlayerId by remember { mutableStateOf<Long?>(null) }
 
     val results = remember(query, positionFilter, career.players, career.clubs) {
         onSearch(query, positionFilter)
+    }
+    val visible = remember(results, sort, affordableOnly, career.userClub.transferBudget) {
+        val filtered = if (affordableOnly) {
+            results.filter { career.userClub.transferBudget >= onAskingPrice(it) }
+        } else results
+        when (sort) {
+            MarketSort.RATING -> filtered.sortedByDescending { it.overall }
+            MarketSort.VALUE -> filtered.sortedByDescending { it.value }
+            MarketSort.AGE -> filtered.sortedBy { it.age }
+            MarketSort.POTENTIAL -> filtered.sortedByDescending { it.potential }
+        }
+    }
+    val shortlisted = remember(shortlist, results) {
+        results.filter { it.id in shortlist }.sortedByDescending { it.overall }
     }
     val pendingOffers = remember(career.pendingOffers) {
         career.pendingOffers.filter {
@@ -161,15 +180,58 @@ fun TransfersScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Sort by",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(MarketSort.entries.toList(), key = { it.name }) { option ->
+                        SelectorChip(
+                            label = option.label,
+                            selected = sort == option,
+                            onClick = { sort = option }
+                        )
+                    }
+                    item {
+                        SelectorChip(
+                            label = "Affordable only",
+                            selected = affordableOnly,
+                            onClick = { affordableOnly = !affordableOnly }
+                        )
+                    }
+                }
+            }
+        }
+
+        // ---- Shortlist ----
+        if (shortlisted.isNotEmpty()) {
+            item { SectionHeader("Shortlist (${shortlisted.size})") }
+            items(shortlisted, key = { "short-${it.id}" }) { player ->
+                MarketPlayerRow(
+                    player = player,
+                    career = career,
+                    askingPrice = onAskingPrice(player),
+                    expectedWage = onExpectedWage(player),
+                    affordable = career.userClub.transferBudget >= onAskingPrice(player),
+                    shortlisted = true,
+                    onToggleShortlist = {
+                        shortlist = if (player.id in shortlist) shortlist - player.id
+                        else shortlist + player.id
+                    },
+                    onClick = { negotiatingPlayerId = player.id }
+                )
             }
         }
 
         // ---- Results ----
         item {
-            SectionHeader("${results.size} players available")
+            SectionHeader("${visible.size} players available")
         }
 
-        if (results.isEmpty()) {
+        if (visible.isEmpty()) {
             item {
                 EmptyState(
                     icon = Icons.Outlined.Search,
@@ -179,13 +241,18 @@ fun TransfersScreen(
             }
         }
 
-        items(results.take(60), key = { it.id }) { player ->
+        items(visible.take(60), key = { it.id }) { player ->
             MarketPlayerRow(
                 player = player,
                 career = career,
                 askingPrice = onAskingPrice(player),
                 expectedWage = onExpectedWage(player),
                 affordable = career.userClub.transferBudget >= onAskingPrice(player),
+                shortlisted = player.id in shortlist,
+                onToggleShortlist = {
+                    shortlist = if (player.id in shortlist) shortlist - player.id
+                    else shortlist + player.id
+                },
                 onClick = { negotiatingPlayerId = player.id }
             )
         }
@@ -253,6 +320,8 @@ private fun MarketPlayerRow(
     askingPrice: Long,
     expectedWage: Long,
     affordable: Boolean,
+    shortlisted: Boolean,
+    onToggleShortlist: () -> Unit,
     onClick: () -> Unit
 ) {
     val club = player.clubId?.let { career.club(it) }
@@ -292,7 +361,7 @@ private fun MarketPlayerRow(
                     }
                 }
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = Fmt.money(askingPrice),
@@ -311,8 +380,25 @@ private fun MarketPlayerRow(
                     color = if (affordable) MaterialTheme.colorScheme.primary else StatColors.bad
                 )
             }
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = if (shortlisted) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = if (shortlisted) "Remove from shortlist" else "Add to shortlist",
+                tint = if (shortlisted) StatColors.elite else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(22.dp)
+                    .clickable(onClick = onToggleShortlist)
+            )
         }
     }
+}
+
+/** How the transfer market results are ordered. */
+enum class MarketSort(val label: String) {
+    RATING("Rating"),
+    POTENTIAL("Potential"),
+    VALUE("Value"),
+    AGE("Age")
 }
 
 @Composable

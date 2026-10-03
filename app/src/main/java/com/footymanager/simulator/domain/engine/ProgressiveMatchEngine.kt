@@ -72,6 +72,19 @@ class ProgressiveMatchEngine(
     private var homePossessionSum = 0.0
     private var possessionSamples = 0
 
+    /**
+     * Live "domination" signal on a 0..100 scale where 50 is an even contest.
+     * It blends possession, shot volume, dangerous attacks and the on-pitch
+     * quality gap, then decays toward the middle so a single incident cannot
+     * flip the bar. The UI interpolates toward this value, so it only needs to
+     * be recomputed once per simulated minute.
+     */
+    private var homeDomination: Double = 50.0
+
+    /** Dangerous attacks (entries into the final third) per side. */
+    private var homeDangerous = 0
+    private var awayDangerous = 0
+
     private var secondHalfStoppage = 0
     private var firstHalfStoppageValue = 0
     private var shootoutHome: Int? = null
@@ -142,6 +155,16 @@ class ProgressiveMatchEngine(
     fun substitutionsMade(clubId: Long): Int = subsMade[clubId] ?: 0
 
     fun windowsConsumed(clubId: Long): Int = windowsUsed[clubId] ?: 0
+
+    /**
+     * The live domination state as a pair of percentages that always sum to 100.
+     * The home value is returned first. This is the raw engine signal; the UI
+     * animates toward it rather than reading it every frame.
+     */
+    fun domination(): Pair<Int, Int> {
+        val home = homeDomination.roundToInt().coerceIn(3, 97)
+        return home to (100 - home)
+    }
 
     // --------------------------------------------------------------- control
 
@@ -233,6 +256,56 @@ class ProgressiveMatchEngine(
     fun applyLiveSubstitution(updated: MatchTeamInput, isHome: Boolean): List<MatchEvent> {
         if (isHome) activeHome = updated else activeAway = updated
         return applySubstitutions(updated, atHalfTime = false)
+    }
+
+    /**
+     * Applies a single live substitution immediately.
+     *
+     * Unlike [applyLiveSubstitution], which replays queued changes, this records
+     * exactly one change: it consumes a substitution and, outside half time, a
+     * window, then books the minutes. It refuses changes that are illegal under
+     * the competition rules and returns an empty list when refused.
+     */
+    fun applyDirectSubstitution(
+        updated: MatchTeamInput,
+        isHome: Boolean,
+        playerOffId: Long,
+        playerOnId: Long,
+        atHalfTime: Boolean = false
+    ): List<MatchEvent> {
+        val clubId = updated.clubId
+        // Validate against the players actually on the pitch right now, not the
+        // proposed XI, otherwise the outgoing player would already look absent.
+        val current = if (isHome) activeHome else activeAway
+        val onPitch = playersOf(current).map { it.id }.toMutableSet()
+        if (playerOffId !in onPitch || playerOnId in onPitch) return emptyList()
+        if ((subsMade[clubId] ?: 0) >= rules.maxSubstitutions) return emptyList()
+        if (!atHalfTime) {
+            val used = windowsUsed[clubId] ?: 0
+            if (used >= rules.maxSubstitutionWindows) return emptyList()
+            windowsUsed[clubId] = used + 1
+        }
+
+        val on = updated.squadById[playerOnId] ?: return emptyList()
+        val off = updated.squadById[playerOffId] ?: return emptyList()
+        subsMade[clubId] = (subsMade[clubId] ?: 0) + 1
+        val changeMinute = if (atHalfTime) 45 else minute.coerceAtLeast(1)
+        offMinutes[playerOffId] = changeMinute
+        onAtMinute[playerOnId] = changeMinute
+        if (isHome) activeHome = updated else activeAway = updated
+
+        val event = MatchEvent(
+            minute = changeMinute,
+            type = MatchEventType.SUBSTITUTION,
+            clubId = clubId,
+            playerId = playerOnId,
+            playerName = on.name,
+            secondaryPlayerId = playerOffId,
+            secondaryPlayerName = off.name,
+            detail = "${on.name} replaces ${off.name}"
+        )
+        events += event
+        return listOf(event)
     }
 
     /** The input currently in force for a side. */
@@ -418,7 +491,60 @@ class ProgressiveMatchEngine(
         homeCorners += MatchEngine.poisson(0.05 * (hPossession / 50.0), random)
         awayCorners += MatchEngine.poisson(0.05 * (aPossession / 50.0), random)
 
+        // ---- Dangerous attacks ----
+        // Entries into the final third scale with attacking intent, tempo, the
+        // quality gap and the possession share, so they track what a viewer sees.
+        val hThreat = hXgPer90 / 90.0 * hInput.tactics.chanceVolumeMultiplier
+        val aThreat = aXgPer90 / 90.0 * aInput.tactics.chanceVolumeMultiplier
+        homeDangerous += MatchEngine.poisson(0.45 * hThreat * (hPossession / 50.0) + 0.05, random)
+        awayDangerous += MatchEngine.poisson(0.45 * aThreat * (aPossession / 50.0) + 0.05, random)
+
+        updateDomination(
+            hPossession.toDouble(), hShotsNow, aShotsNow, hHandicap, aHandicap, hStrength, aStrength
+        )
         return out
+    }
+
+    /**
+     * Blends the running match indicators into a single domination value.
+     *
+     * Possession is the anchor, shot and dangerous-attack differentials add
+     * pressure, and the on-pitch quality gap (including red-card handicaps) adds
+     * a small bias. The result is eased toward the previous value so the bar
+     * drifts realistically instead of snapping.
+     */
+    private fun updateDomination(
+        hPossession: Double,
+        hShotsNow: Int,
+        aShotsNow: Int,
+        hHandicap: Double,
+        aHandicap: Double,
+        hStrength: TeamStrength,
+        aStrength: TeamStrength
+    ) {
+        val possessionSignal = (hPossession - 50.0) * 0.60
+
+        val totalShots = (homeShots + awayShots).coerceAtLeast(1)
+        val shotSignal = ((homeShots - awayShots).toDouble() / totalShots) * 14.0
+
+        val totalDangerous = (homeDangerous + awayDangerous).coerceAtLeast(1)
+        val attackSignal = ((homeDangerous - awayDangerous).toDouble() / totalDangerous) * 12.0
+
+        // Quality gap: a small nudge, so a much better side gradually takes over.
+        val qualitySignal = (hStrength.overall - aStrength.overall) * 0.35
+
+        // Red cards are decisive: a ten-man side cedes control.
+        val redSignal = (aHandicap - hHandicap) * 40.0
+
+        // Recent shot burst gives an immediate kick without flipping the bar.
+        val burst = (hShotsNow - aShotsNow) * 2.2
+
+        val target = (50.0 + possessionSignal + shotSignal + attackSignal + qualitySignal +
+            redSignal + burst).coerceIn(6.0, 94.0)
+
+        // Ease toward the target: responsive but never a jump.
+        homeDomination += (target - homeDomination) * 0.18
+        homeDomination = homeDomination.coerceIn(6.0, 94.0)
     }
 
     private fun playersOf(input: MatchTeamInput): List<MatchPlayer> =

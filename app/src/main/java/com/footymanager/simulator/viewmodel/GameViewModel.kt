@@ -107,7 +107,19 @@ data class MatchDayState(
     val substitutionWindowsUsed: Int = 0,
     val result: MatchResult? = null,
     /** Remaining fixtures on the same matchday week that are still to be played. */
-    val pendingOtherFixtures: List<Match> = emptyList()
+    val pendingOtherFixtures: List<Match> = emptyList(),
+    /**
+     * Live domination, home share first, always summing to 100. The UI animates
+     * toward this value every frame, so it only changes once per simulated minute.
+     */
+    val homeDomination: Int = 50,
+    /** The minute of the most recent significant event, used to trigger flashes. */
+    val lastEventMinute: Int = -1,
+    /** Bench players still available to come on. */
+    val benchIds: List<Long> = emptyList(),
+    /** Competition limits, shown on the substitution screen. */
+    val maxSubstitutions: Int = 5,
+    val maxSubstitutionWindows: Int = 3
 ) {
     val isPlayed: Boolean get() = result != null
     val isFinished: Boolean get() = result != null
@@ -175,6 +187,16 @@ class GameViewModel(
 
     /** The career snapshot the live engine was built from. */
     private var _engineCareer: Career? = null
+
+    /**
+     * The user's XI currently on the pitch, tracked across live substitutions so
+     * that a second change cannot resurrect a player who has already gone off.
+     * Kept in sync whenever the engine adopts a new selection.
+     */
+    private var _liveXi: List<Long> = emptyList()
+
+    /** Bench still available for the live match. */
+    private var _liveBench: List<Long> = emptyList()
 
     /** The coroutine driving the live match clock. */
     private var engineJob: Job? = null
@@ -414,6 +436,47 @@ class GameViewModel(
         }
     }
 
+    /**
+     * Swaps the players occupying two slots. Used by the drag-and-drop tactical
+     * board; a no-op when either slot is empty or both hold the same player.
+     */
+    fun swapSlots(slotA: Int, slotB: Int) {
+        if (slotA == slotB) return
+        updateCareer { career ->
+            val formation = career.tactics.formation
+            if (slotA !in formation.roles.indices || slotB !in formation.roles.indices) {
+                return@updateCareer career
+            }
+            val byId = career.squadOf(career.userClubId).associateBy { it.id }
+            val slotAPlayer = career.selection.startingXi.firstOrNull { it.slotIndex == slotA }?.playerId
+            val slotBPlayer = career.selection.startingXi.firstOrNull { it.slotIndex == slotB }?.playerId
+            if (slotAPlayer == null && slotBPlayer == null) return@updateCareer career
+
+            val slots = career.selection.startingXi.filterNot {
+                it.slotIndex == slotA || it.slotIndex == slotB
+            }.toMutableList()
+            if (slotBPlayer != null) {
+                val p = byId[slotBPlayer]
+                slots += LineupSlot(
+                    slotIndex = slotA,
+                    playerId = slotBPlayer,
+                    outOfPosition = p != null && p.position != formation.roles[slotA].naturalPosition
+                )
+            }
+            if (slotAPlayer != null) {
+                val p = byId[slotAPlayer]
+                slots += LineupSlot(
+                    slotIndex = slotB,
+                    playerId = slotAPlayer,
+                    outOfPosition = p != null && p.position != formation.roles[slotB].naturalPosition
+                )
+            }
+            career.copy(
+                selection = career.selection.copy(startingXi = slots.sortedBy { it.slotIndex })
+            )
+        }
+    }
+
     fun removePlayerFromSlot(slotIndex: Int) {
         updateCareer { career ->
             val removed = career.selection.startingXi.firstOrNull { it.slotIndex == slotIndex }?.playerId
@@ -513,13 +576,19 @@ class GameViewModel(
         )
         _engine = engine
         _engineCareer = base
+        val userSelection = if (matchDay.isHome) homeInput.selection else awayInput.selection
+        _liveXi = userSelection.startingXi.map { it.playerId }
+        _liveBench = userSelection.substitutes
         _matchDay.value = matchDay.copy(
             started = true,
             simulating = true,
             mode = mode,
             userFormationName = base.tactics.formation.name,
             homeOnPitch = homeInput.selection.startingXi.map { it.playerId },
-            awayOnPitch = awayInput.selection.startingXi.map { it.playerId }
+            awayOnPitch = awayInput.selection.startingXi.map { it.playerId },
+            benchIds = userSelection.substitutes,
+            maxSubstitutions = SeasonEngine.rulesFor(matchDay.match).maxSubstitutions,
+            maxSubstitutionWindows = SeasonEngine.rulesFor(matchDay.match).maxSubstitutionWindows
         )
         runEngineLoop()
     }
@@ -574,6 +643,7 @@ class GameViewModel(
         val matchDay = _matchDay.value ?: return
         val (homeStats, awayStats) = engine.stats()
         val (hg, ag) = engine.score()
+        val (domHome, _) = engine.domination()
         val feed = matchDay.feed + produced.map { event ->
             MatchFeedItem(
                 minute = event.displayMinute,
@@ -590,6 +660,8 @@ class GameViewModel(
             homeStats = homeStats,
             awayStats = awayStats,
             feed = feed.takeLast(80),
+            homeDomination = domHome,
+            lastEventMinute = produced.lastOrNull()?.minute ?: matchDay.lastEventMinute,
             substitutionsMade = engine.substitutionsMade(careerUserClubId() ?: -1L),
             substitutionWindowsUsed = engine.windowsConsumed(careerUserClubId() ?: -1L)
         )
@@ -669,6 +741,10 @@ class GameViewModel(
         val started = engine.beginSecondHalf()
         val (hg, ag) = engine.score()
         val (hStats, aStats) = engine.stats()
+        // Half-time changes may have swapped personnel; resync the tracked XI/bench.
+        val liveNow = engine.activeInput(userIsHome).selection
+        _liveXi = liveNow.startingXi.map { it.playerId }
+        _liveBench = liveNow.substitutes
         _matchDay.value = matchDay.copy(
             awaitingHalfTime = false,
             simulating = true,
@@ -677,6 +753,8 @@ class GameViewModel(
             awayGoals = ag,
             homeStats = hStats,
             awayStats = aStats,
+            homeOnPitch = engine.activeInput(true).selection.startingXi.map { it.playerId },
+            awayOnPitch = engine.activeInput(false).selection.startingXi.map { it.playerId },
             plannedSubstitutions = emptyList(),
             feed = (matchDay.feed + (changeEvents + started).map {
                 MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == career.userClubId)
@@ -702,25 +780,65 @@ class GameViewModel(
         runEngineLoop()
     }
 
-    /** Applies a live substitution without pausing the match (in-match change). */
+    /**
+     * Applies a live substitution to the players actually on the pitch.
+     *
+     * The substitution is applied directly to the engine's active selection rather
+     * than queued, and the tracked live XI/bench are updated, so a second change
+     * sees the true on-pitch eleven and can never re-introduce a player who has
+     * already been withdrawn.
+     */
     fun makeLiveSubstitution(playerOffId: Long, playerOnId: Long) {
         val engine = _engine ?: return
         val matchDay = _matchDay.value ?: return
         val career = _career.value ?: return
         val userIsHome = matchDay.match.homeClubId == career.userClubId
-        val updated = buildUserInput(
-            career, matchDay, userIsHome,
-            plannedSubstitutions = listOf(PlannedSubstitution(playerOffId, playerOnId, minute = matchDay.minute))
+
+        if (playerOffId !in _liveXi) return
+        if (playerOnId !in _liveBench) return
+
+        val current = engine.activeInput(userIsHome)
+        val newXi = _liveXi.map { if (it == playerOffId) playerOnId else it }
+        val newBench = _liveBench - playerOnId
+
+        val updatedSelection = current.selection.copy(
+            startingXi = current.selection.startingXi.map { slot ->
+                if (slot.playerId == playerOffId) slot.copy(playerId = playerOnId) else slot
+            },
+            substitutes = newBench
         )
-        val events = engine.applyLiveSubstitution(updated, isHome = userIsHome)
-        _matchDay.value = matchDay.copy(
-            feed = (matchDay.feed + events.map {
+
+        val events = engine.applyDirectSubstitution(
+            current.copy(selection = updatedSelection),
+            isHome = userIsHome,
+            playerOffId = playerOffId,
+            playerOnId = playerOnId
+        )
+        if (events.isEmpty()) return
+
+        _liveXi = newXi
+        _liveBench = newBench
+        _engineCareer = _engineCareer?.copy(selection = updatedSelection)
+
+        val latest = _matchDay.value ?: return
+        _matchDay.value = latest.copy(
+            homeOnPitch = if (userIsHome) newXi else latest.homeOnPitch,
+            awayOnPitch = if (!userIsHome) newXi else latest.awayOnPitch,
+            feed = (latest.feed + events.map {
                 MatchFeedItem(it.displayMinute, it.type, feedText(it), true)
             }).takeLast(80),
+            lastEventMinute = events.last().minute,
             substitutionsMade = engine.substitutionsMade(career.userClubId),
             substitutionWindowsUsed = engine.windowsConsumed(career.userClubId)
         )
+        playSound(SoundCue.CLICK)
     }
+
+    /** The user's XI currently on the pitch, for the live substitution screen. */
+    fun liveXi(): List<Long> = _liveXi
+
+    /** The bench still available, for the live substitution screen. */
+    fun liveBench(): List<Long> = _liveBench
 
     /** Builds the user's current team input, optionally overriding their XI. */
     private fun buildUserInput(
@@ -770,6 +888,14 @@ class GameViewModel(
         }
         // Persist so the change survives the match and is used next week.
         updateCareer { it.copy(tactics = tactics, selection = repaired) }
+
+        // A formation change can swap personnel; keep the tracked live XI/bench
+        // honest so subsequent substitutions work from the real on-pitch eleven.
+        if (tactics.formationId != current.tactics.formationId) {
+            val liveNow = engine.activeInput(userIsHome).selection
+            _liveXi = liveNow.startingXi.map { it.playerId }
+            _liveBench = liveNow.substitutes
+        }
 
         val latest = _matchDay.value ?: return
         _matchDay.value = latest.copy(

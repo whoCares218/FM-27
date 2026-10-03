@@ -41,6 +41,7 @@ import com.footymanager.simulator.ui.navigation.BottomTab
 import com.footymanager.simulator.ui.navigation.Routes
 import com.footymanager.simulator.ui.screens.AboutDialog
 import com.footymanager.simulator.ui.screens.BoardScreen
+import com.footymanager.simulator.ui.screens.ClubProfileScreen
 import com.footymanager.simulator.ui.screens.CompetitionHubScreen
 import com.footymanager.simulator.ui.screens.FinancesScreen
 import com.footymanager.simulator.ui.screens.FixturesScreen
@@ -304,6 +305,21 @@ private fun AppNavHost(
             }
         }
 
+        composable(
+            route = Routes.CLUB_PROFILE,
+            arguments = listOf(navArgument("clubId") { type = NavType.LongType })
+        ) { entry ->
+            val clubId = entry.arguments?.getLong("clubId") ?: return@composable
+            if (career != null) {
+                ClubProfileScreen(
+                    career = career,
+                    clubId = clubId,
+                    onBack = { navController.popBackStack() },
+                    onOpenPlayer = { id -> navController.navigate(Routes.playerDetail(id)) }
+                )
+            }
+        }
+
         // ------------------------------------------------------- tactics
         composable(Routes.TACTICS) {
             if (career != null) {
@@ -319,6 +335,7 @@ private fun AppNavHost(
                     onAutoPick = { viewModel.autoPickSelection() },
                     onAssignSlot = { slot, player -> viewModel.assignPlayerToSlot(slot, player) },
                     onRemoveFromSlot = { viewModel.removePlayerFromSlot(it) },
+                    onSwapSlots = { a, b -> viewModel.swapSlots(a, b) },
                     onSetCaptain = { viewModel.setCaptain(it) },
                     onToggleSubstitute = { viewModel.toggleSubstitute(it) }
                 )
@@ -375,7 +392,11 @@ private fun AppNavHost(
 
         composable(Routes.LEAGUE_TABLE) {
             if (career != null) {
-                LeagueScreen(career = career, onOpenFixtures = { navController.navigate(Routes.FIXTURES) })
+                LeagueScreen(
+                    career = career,
+                    onOpenFixtures = { navController.navigate(Routes.FIXTURES) },
+                    onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
+                )
             }
         }
 
