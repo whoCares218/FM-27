@@ -17,14 +17,16 @@ object StadiumEngine {
      *
      * Demand rises with the club's reputation and the attractiveness of the
      * opponent, and falls as the ticket price climbs above the club's natural
-     * price band. A modest home run also helps fill the ground.
+     * price band. A modest home run also helps fill the ground, and a happy
+     * fanbase turns up in greater numbers.
      */
     fun attendance(
         stadium: Stadium,
         reputation: Int,
         opponentReputation: Int,
         recentPointsPerGame: Double,
-        random: Random
+        random: Random,
+        fanSatisfaction: Int = 60
     ): Int {
         val band = stadium.priceBand(reputation)
         val midPrice = (band.first + band.last) / 2.0
@@ -36,9 +38,11 @@ object StadiumEngine {
         val reputationFactor = 0.55 + reputation / 160.0
         val opponentFactor = 1.0 + (opponentReputation - reputation) / 260.0
         val formFactor = (0.9 + recentPointsPerGame * 0.06).coerceIn(0.85, 1.14)
+        // A satisfied crowd is worth roughly +/- 12% of the gate.
+        val fanFactor = (0.88 + fanSatisfaction / 100.0 * 0.24).coerceIn(0.82, 1.14)
         val noise = 1.0 + random.nextDouble(-0.05, 0.05)
 
-        val fill = (reputationFactor * opponentFactor * formFactor * priceFactor * noise)
+        val fill = (reputationFactor * opponentFactor * formFactor * priceFactor * fanFactor * noise)
             .coerceIn(0.28, 0.99)
 
         return (stadium.capacity * fill).roundToInt().coerceIn(0, stadium.capacity)

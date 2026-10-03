@@ -207,6 +207,7 @@ object SeasonEngine {
         var ledger = career.ledger
         var idCounter = career.idCounter
         var stadium = career.stadium
+        var managerRecord = career.managerRecord
 
         val isUserFixture = match.involves(career.userClubId)
         if (isUserFixture) {
@@ -258,7 +259,8 @@ object SeasonEngine {
                     reputation = career.userClub.reputation,
                     opponentReputation = opponent.reputation,
                     recentPointsPerGame = ppg,
-                    random = random
+                    random = random,
+                    fanSatisfaction = career.fanSatisfaction
                 )
                 val revenue = StadiumEngine.matchdayIncome(attendance, career.stadium.ticketPrice)
                 val expenses = StadiumEngine.matchdayExpenses(career.stadium, attendance)
@@ -295,6 +297,15 @@ object SeasonEngine {
             // Board reacts to every user result.
             val confidenceDelta = boardConfidenceDelta(userGoals, oppGoals, career, opponent)
             board = evaluateBoard(career, board, confidenceDelta)
+
+            // The manager's own record spans every club and season.
+            val record = career.managerRecord
+            managerRecord = record.copy(
+                matchesManaged = record.matchesManaged + 1,
+                wins = record.wins + if (userGoals > oppGoals) 1 else 0,
+                draws = record.draws + if (userGoals == oppGoals) 1 else 0,
+                losses = record.losses + if (userGoals < oppGoals) 1 else 0
+            )
         }
 
         // ---- Injury news for the user's squad ----
@@ -345,7 +356,8 @@ object SeasonEngine {
             board = board,
             ledger = ledger.takeLast(400),
             idCounter = idCounter,
-            stadium = stadium
+            stadium = stadium,
+            managerRecord = managerRecord
         )
 
         // ---- Champions League: update the league-phase table ----
@@ -671,7 +683,7 @@ object SeasonEngine {
             career.userClubId
         )
         val satisfaction = StadiumEngine.fanSatisfaction(
-            current = career.board.confidence.coerceIn(0, 100),
+            current = career.fanSatisfaction,
             stadium = stadium,
             reputation = career.userClub.reputation,
             recentPointsPerGame = ppg,
@@ -689,6 +701,7 @@ object SeasonEngine {
             ledger = ledger.takeLast(400),
             news = news.takeLast(120),
             idCounter = idCounter,
+            fanSatisfaction = satisfaction,
             board = career.board.copy(confidence = satisfaction.coerceIn(career.board.confidence - 3, career.board.confidence + 3))
         )
     }
@@ -965,7 +978,10 @@ object SeasonEngine {
             sponsorOffers = newSponsorOffers,
             sponsorship = null,
             sponsorshipSeason = 0,
-            stadium = StadiumEngine.progressExpansion(career.stadium)
+            stadium = StadiumEngine.progressExpansion(career.stadium),
+            managerRecord = career.managerRecord.copy(
+                trophies = career.managerRecord.trophies + summary.trophies
+            )
         )
     }
 

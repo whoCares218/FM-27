@@ -194,6 +194,25 @@ data class BoardState(
     val lastEvaluation: String = "The board is satisfied with the direction of the club."
 )
 
+/**
+ * The manager's own record, kept for the career profile screen. It is separate
+ * from the club's league table because it spans every club and season.
+ */
+@Serializable
+data class ManagerRecord(
+    val matchesManaged: Int = 0,
+    val wins: Int = 0,
+    val draws: Int = 0,
+    val losses: Int = 0,
+    val trophies: List<String> = emptyList()
+) {
+    val pointsPerGame: Double
+        get() = if (matchesManaged == 0) 0.0 else (wins * 3 + draws) / matchesManaged.toDouble()
+
+    val winRatePercent: Int
+        get() = if (matchesManaged == 0) 0 else (wins * 100 / matchesManaged)
+}
+
 @Serializable
 enum class OfferStatus { PENDING, ACCEPTED, REJECTED, WITHDRAWN, COMPLETED, COLLAPSED }
 

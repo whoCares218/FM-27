@@ -85,7 +85,11 @@ data class Career(
      */
     val lastStandings: Map<String, List<Long>> = emptyMap(),
     /** Prize money and competition revenue already banked this season. */
-    val competitionRevenueThisSeason: Long = 0L
+    val competitionRevenueThisSeason: Long = 0L,
+    /** Fan mood (0..100). Drives attendance, atmosphere and gate receipts. */
+    val fanSatisfaction: Int = 60,
+    /** The manager's cumulative record across the whole career. */
+    val managerRecord: ManagerRecord = ManagerRecord()
 ) {
     val userClub: Club
         get() = clubs.first { it.id == userClubId }

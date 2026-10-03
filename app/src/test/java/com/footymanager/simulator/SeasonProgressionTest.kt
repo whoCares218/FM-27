@@ -498,4 +498,57 @@ class SeasonProgressionTest {
         assertTrue(squad.any { it.position.isDefender })
         assertTrue(squad.any { it.position.isMidfielder })
     }
+
+    @Test
+    fun `the manager record accumulates over a season`() {
+        val career = playFullSeason(newCareer(seed = 313L), Random(313))
+        val record = career.managerRecord
+        assertEquals(
+            "Every user fixture must be counted once",
+            record.wins + record.draws + record.losses,
+            record.matchesManaged
+        )
+        assertTrue("A full season should register matches", record.matchesManaged > 0)
+        assertTrue(record.pointsPerGame in 0.0..3.0)
+        assertTrue(record.winRatePercent in 0..100)
+    }
+
+    @Test
+    fun `fan satisfaction stays in range and tracks results`() {
+        val career = playFullSeason(newCareer(seed = 505L), Random(505))
+        assertTrue(
+            "Fan satisfaction must stay within 0..100, was ${career.fanSatisfaction}",
+            career.fanSatisfaction in 0..100
+        )
+    }
+
+    @Test
+    fun `a happy fanbase fills more of the ground`() {
+        // Use a modest club so neither gate is capped by the stadium capacity,
+        // which would otherwise hide the fan effect.
+        val clubs = ClubDatabase.buildAll()
+        val club = clubs.filter { it.reputation <= 66 }.minByOrNull { it.reputation } ?: clubs.last()
+        val base = newCareer(clubId = club.id, seed = 909L)
+        val stadium = base.stadium
+        val unhappy = com.footymanager.simulator.domain.engine.StadiumEngine.attendance(
+            stadium = stadium,
+            reputation = base.userClub.reputation,
+            opponentReputation = base.userClub.reputation,
+            recentPointsPerGame = 1.5,
+            random = Random(7),
+            fanSatisfaction = 10
+        )
+        val happy = com.footymanager.simulator.domain.engine.StadiumEngine.attendance(
+            stadium = stadium,
+            reputation = base.userClub.reputation,
+            opponentReputation = base.userClub.reputation,
+            recentPointsPerGame = 1.5,
+            random = Random(7),
+            fanSatisfaction = 95
+        )
+        assertTrue(
+            "Happy fans should attend in greater numbers ($happy vs $unhappy)",
+            happy > unhappy
+        )
+    }
 }

@@ -40,6 +40,7 @@ import com.footymanager.simulator.domain.model.ObjectiveStatus
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.ui.components.ClubCrest
 import com.footymanager.simulator.ui.components.FmCard
+import com.footymanager.simulator.ui.components.MeterBar
 import com.footymanager.simulator.ui.components.FmPrimaryButton
 import com.footymanager.simulator.ui.components.FmSecondaryButton
 import com.footymanager.simulator.ui.components.Fmt
@@ -274,6 +275,29 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Fans",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    MeterBar(
+                        fraction = career.fanSatisfaction / 100f,
+                        color = fanMoodColor(career.fanSatisfaction),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = fanMoodLabel(career.fanSatisfaction),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = fanMoodColor(career.fanSatisfaction)
                     )
                 }
                 if (career.board.objectives.isNotEmpty()) {

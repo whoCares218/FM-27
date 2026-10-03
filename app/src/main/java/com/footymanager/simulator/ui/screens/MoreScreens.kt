@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,7 @@ import com.footymanager.simulator.domain.engine.FinanceEngine
 import com.footymanager.simulator.domain.engine.SeasonSummaryBuilder
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Difficulty
+import com.footymanager.simulator.domain.model.NewsCategory
 import com.footymanager.simulator.domain.model.ObjectiveStatus
 import com.footymanager.simulator.domain.model.SeasonSummary
 import com.footymanager.simulator.domain.model.TrainingFocus
@@ -53,6 +55,7 @@ import com.footymanager.simulator.ui.components.FmSecondaryButton
 import com.footymanager.simulator.ui.components.ChartBar
 import com.footymanager.simulator.ui.components.CompositionBar
 import com.footymanager.simulator.ui.components.Fmt
+import com.footymanager.simulator.ui.components.MeterBar
 import com.footymanager.simulator.ui.components.MonthlyBarChart
 import com.footymanager.simulator.ui.components.InfoPill
 import com.footymanager.simulator.ui.components.RatingBadge
@@ -354,7 +357,12 @@ fun BoardScreen(career: Career) {
                     fontWeight = FontWeight.Bold,
                     color = confidenceColor(board.confidence)
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
+                MeterBar(
+                    fraction = board.confidence / 100f,
+                    color = confidenceColor(board.confidence)
+                )
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = board.lastEvaluation,
                     style = MaterialTheme.typography.bodyMedium,
@@ -370,6 +378,87 @@ fun BoardScreen(career: Career) {
                     },
                     color = confidenceColor(board.confidence)
                 )
+            }
+        }
+
+        item {
+            FmCard {
+                SectionHeader("Supporter mood")
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = fanMoodLabel(career.fanSatisfaction),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = fanMoodColor(career.fanSatisfaction)
+                )
+                Spacer(Modifier.height(8.dp))
+                MeterBar(fraction = career.fanSatisfaction / 100f, color = fanMoodColor(career.fanSatisfaction))
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Happy supporters fill the ground and lift gate receipts; " +
+                        "an unhappy crowd stays away.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            FmCard {
+                SectionHeader("Manager profile")
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = career.managerName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${career.userClub.name} · Season ${career.season}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell("Played", "${career.managerRecord.matchesManaged}")
+                    StatCell("Won", "${career.managerRecord.wins}", valueColor = StatColors.elite)
+                    StatCell("Drawn", "${career.managerRecord.draws}", valueColor = StatColors.average)
+                    StatCell("Lost", "${career.managerRecord.losses}", valueColor = StatColors.bad)
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell("Win rate", "${career.managerRecord.winRatePercent}%")
+                    StatCell("Points / game", Fmt.rating(career.managerRecord.pointsPerGame))
+                    StatCell("Trophies", "${career.managerRecord.trophies.size}")
+                }
+                if (career.managerRecord.trophies.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Honours",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    career.managerRecord.trophies.reversed().take(8).forEach { trophy ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Outlined.EmojiEvents,
+                                contentDescription = null,
+                                tint = StatColors.elite,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = trophy,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -400,6 +489,12 @@ fun BoardScreen(career: Career) {
                 ObjectiveStatus.AT_RISK -> StatColors.average
                 ObjectiveStatus.FAILED -> StatColors.bad
             }
+            val progress = when (objective.status) {
+                ObjectiveStatus.ACHIEVED -> 1f
+                ObjectiveStatus.ON_TRACK -> 0.68f
+                ObjectiveStatus.AT_RISK -> 0.34f
+                ObjectiveStatus.FAILED -> 0.08f
+            }
             FmCard(accent = color, padding = 12.dp) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -418,7 +513,9 @@ fun BoardScreen(career: Career) {
                         fontWeight = FontWeight.Bold
                     )
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
+                MeterBar(fraction = progress, color = color)
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = objective.description,
                     style = MaterialTheme.typography.bodySmall,
@@ -450,23 +547,76 @@ fun BoardScreen(career: Career) {
     }
 }
 
+fun fanMoodLabel(satisfaction: Int): String = when {
+    satisfaction >= 80 -> "Delighted"
+    satisfaction >= 65 -> "Pleased"
+    satisfaction >= 45 -> "Settled"
+    satisfaction >= 30 -> "Restless"
+    else -> "Furious"
+}
+
+fun fanMoodColor(satisfaction: Int) = when {
+    satisfaction >= 65 -> StatColors.elite
+    satisfaction >= 45 -> StatColors.good
+    satisfaction >= 30 -> StatColors.average
+    else -> StatColors.bad
+}
+
 // ---------------------------------------------------------------------- news
+
+/** Inbox filters, ordered so the most actionable stories come first. */
+private enum class NewsFilter(val label: String) {
+    ALL("All"),
+    MATCH("Matches"),
+    TRANSFER("Transfers"),
+    INJURY("Injuries"),
+    BOARD("Board");
+
+    fun matches(category: NewsCategory): Boolean = when (this) {
+        ALL -> true
+        MATCH -> category == NewsCategory.MATCH || category == NewsCategory.AWARD
+        TRANSFER -> category == NewsCategory.TRANSFER || category == NewsCategory.TRANSFER_WINDOW
+        INJURY -> category == NewsCategory.INJURY
+        BOARD -> category == NewsCategory.BOARD || category == NewsCategory.TRAINING
+    }
+}
 
 @Composable
 fun NewsScreen(career: Career) {
-    val news = remember(career.news) { career.news.reversed() }
+    var filter by remember { mutableStateOf(NewsFilter.ALL) }
+    val allNews = remember(career.news) { career.news.reversed() }
+    val news = remember(allNews, filter) { allNews.filter { filter.matches(it.category) } }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                NewsFilter.entries.forEach { option ->
+                    SelectorChip(
+                        label = option.label,
+                        selected = filter == option,
+                        onClick = { filter = option }
+                    )
+                }
+            }
+        }
+
         if (news.isEmpty()) {
             item {
                 EmptyState(
                     icon = Icons.Filled.Star,
                     title = "No news yet",
-                    body = "Match reports, transfers, injuries and board updates will appear here."
+                    body = if (allNews.isEmpty()) {
+                        "Match reports, transfers, injuries and board updates will appear here."
+                    } else {
+                        "No ${filter.label.lowercase()} stories to show."
+                    }
                 )
             }
         }

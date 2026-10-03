@@ -1,5 +1,7 @@
 package com.footymanager.simulator.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -200,6 +203,39 @@ fun contrastColorFor(argb: Int): Color {
     val b = argb and 0xFF
     val luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
     return if (luminance > 0.62) Color(0xFF101828) else Color.White
+}
+
+/**
+ * A slim animated progress meter used for board confidence, objectives and
+ * supporter mood. It never overflows: the fill is clamped to 0..1.
+ */
+@Composable
+fun MeterBar(
+    fraction: Float,
+    color: Color,
+    modifier: Modifier = Modifier,
+    height: Dp = 8.dp
+) {
+    val animated by animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 650),
+        label = "meter"
+    )
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(height / 2))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(animated)
+                .height(height)
+                .clip(RoundedCornerShape(height / 2))
+                .background(color)
+        )
+    }
 }
 
 /** Small labelled statistic used across detail screens. */
