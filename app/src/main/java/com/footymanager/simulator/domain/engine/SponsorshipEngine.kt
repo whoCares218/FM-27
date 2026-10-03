@@ -5,13 +5,13 @@ import com.footymanager.simulator.domain.model.SponsorOffer
 import kotlin.random.Random
 
 /**
- * Sponsorship offers. Three deals are put to the board before each season, each
+ * Sponsorship offers. Five deals are put to the board before each season, each
  * trading a safe guaranteed income against a riskier performance bonus. The
  * choice is a genuine decision rather than a cosmetic label.
  */
 object SponsorshipEngine {
 
-    /** Builds three offers scaled to the club's reputation. */
+    /** Builds five offers scaled to the club's reputation. */
     fun generateOffers(club: Club, random: Random): List<SponsorOffer> {
         val scale = when {
             club.reputation >= 88 -> 1.0
@@ -55,6 +55,26 @@ object SponsorshipEngine {
                 bonusCondition = "Finish in the top half",
                 bonusAmount = jitter(base * 0.14),
                 risk = "Most money up front, lowest ceiling if the season goes well."
+            ),
+            SponsorOffer(
+                id = 4,
+                name = "Streaming Platform",
+                tier = "Global",
+                upfront = jitter(base * 0.30),
+                seasonal = jitter(base * 0.36),
+                bonusCondition = "Win a cup",
+                bonusAmount = jitter(base * 0.48),
+                risk = "Modest retainer with a big cup bonus. Cup runs are unpredictable."
+            ),
+            SponsorOffer(
+                id = 5,
+                name = "Energy Drinks Co.",
+                tier = "National",
+                upfront = jitter(base * 0.40),
+                seasonal = jitter(base * 0.30),
+                bonusCondition = "Avoid relegation",
+                bonusAmount = jitter(base * 0.20),
+                risk = "Safe, low-risk income with a bonus almost any decent season secures."
             )
         )
     }

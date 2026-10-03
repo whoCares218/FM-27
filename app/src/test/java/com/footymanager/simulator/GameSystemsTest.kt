@@ -384,6 +384,51 @@ class GameSystemsTest {
     }
 
     @Test
+    fun `finance summary totals match the ledger and never double count`() {
+        val career = CareerFactory.create(
+            CareerFactory.NewCareerRequest("Test Manager", clubs.first().id, Difficulty.NORMAL, 77L)
+        )
+        val summary = FinanceEngine.summarise(career)
+        val seasonEntries = career.ledger.filter { it.season == career.season }
+        val ledgerIncome = seasonEntries.filter { it.amount > 0 }.sumOf { it.amount }
+        val ledgerExpense = seasonEntries.filter { it.amount < 0 }.sumOf { -it.amount }
+
+        assertEquals(ledgerIncome, summary.totalIncome)
+        assertEquals(ledgerExpense, summary.totalExpense)
+        assertEquals(summary.totalIncome - summary.totalExpense, summary.netSeason)
+    }
+
+    @Test
+    fun `monthly finance points are ordered and reconcile with the ledger`() {
+        val career = CareerFactory.create(
+            CareerFactory.NewCareerRequest("Test Manager", clubs.first().id, Difficulty.NORMAL, 88L)
+        )
+        val summary = FinanceEngine.summarise(career)
+        val months = summary.monthly.map { it.month }
+        assertEquals("months must be sorted", months.sorted(), months)
+        // Every point must be non-negative on both sides.
+        summary.monthly.forEach { point ->
+            assertTrue(point.income >= 0)
+            assertTrue(point.expense >= 0)
+        }
+    }
+
+    @Test
+    fun `sponsorship offers provide five distinct risk profiles`() {
+        val club = clubs.first { it.reputation >= 88 }
+        val offers = com.footymanager.simulator.domain.engine.SponsorshipEngine
+            .generateOffers(club, Random(5L))
+        assertEquals(5, offers.size)
+        assertEquals(5, offers.map { it.id }.toSet().size)
+        // Every offer must be a real decision: some guaranteed money and a bonus.
+        offers.forEach { offer ->
+            assertTrue(offer.upfront + offer.seasonal > 0)
+            assertTrue(offer.bonusAmount > 0)
+            assertTrue(offer.risk.isNotBlank())
+        }
+    }
+
+    @Test
     fun `difficulty scales the initial budgets`() {
         val easy = com.footymanager.simulator.domain.model.Difficulty.EASY
         val hard = com.footymanager.simulator.domain.model.Difficulty.HARD

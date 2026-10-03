@@ -131,6 +131,16 @@ object FinanceEngine {
         return currentBill + weeklyWage <= club.wageBudget * 1.25
     }
 
+    /** One month of the club's ledger, used by the finances chart. */
+    data class MonthlyFinancePoint(
+        val label: String,
+        val month: Int,
+        val income: Long,
+        val expense: Long
+    ) {
+        val net: Long get() = income - expense
+    }
+
     /** Revenue summary used by the finances screen. */
     data class FinanceSummary(
         val balance: Long,
@@ -141,15 +151,44 @@ object FinanceEngine {
         val transferIncome: Long,
         val matchdayRevenue: Long,
         val prizeMoney: Long,
-        val wageSpend: Long
+        val wageSpend: Long,
+        val sponsorshipRevenue: Long = 0L,
+        val stadiumSpend: Long = 0L,
+        val otherIncome: Long = 0L,
+        val monthly: List<MonthlyFinancePoint> = emptyList()
     ) {
         val netTransfer: Long get() = transferIncome - transferSpend
         val wageHeadroom: Long get() = wageBudget - weeklyWageBill
         val isWageBillHealthy: Boolean get() = weeklyWageBill <= wageBudget
+
+        /** Every positive ledger amount this season. */
+        val totalIncome: Long
+            get() = matchdayRevenue + prizeMoney + sponsorshipRevenue + otherIncome + transferIncome
+
+        /** Every negative ledger amount this season. */
+        val totalExpense: Long get() = wageSpend + stadiumSpend + transferSpend
+
+        val netSeason: Long get() = totalIncome - totalExpense
     }
 
     fun summarise(career: Career): FinanceSummary {
         val club = career.userClub
+        val seasonLedger = career.ledger.filter { it.season == career.season }
+        val monthly = seasonLedger
+            .groupBy { it.date.month }
+            .map { (month, entries) ->
+                MonthlyFinancePoint(
+                    label = MONTH_SHORT[month - 1],
+                    month = month,
+                    income = entries.filter { it.amount > 0 }.sumOf { it.amount },
+                    expense = entries.filter { it.amount < 0 }.sumOf { -it.amount }
+                )
+            }
+            .sortedBy { it.month }
+
+        fun sumOf(category: LedgerCategory): Long =
+            seasonLedger.filter { it.category == category }.sumOf { it.amount }
+
         return FinanceSummary(
             balance = club.balance,
             transferBudget = club.transferBudget,
@@ -157,15 +196,20 @@ object FinanceEngine {
             weeklyWageBill = career.wageBill(club.id),
             transferSpend = career.transferSpendThisSeason,
             transferIncome = career.transferIncomeThisSeason,
-            matchdayRevenue = career.ledger
-                .filter { it.category == LedgerCategory.MATCHDAY && it.season == career.season }
-                .sumOf { it.amount },
-            prizeMoney = career.ledger
-                .filter { it.category == LedgerCategory.PRIZE_MONEY && it.season == career.season }
-                .sumOf { it.amount },
-            wageSpend = career.ledger
-                .filter { it.category == LedgerCategory.WAGES && it.season == career.season }
-                .sumOf { -it.amount }
+            matchdayRevenue = sumOf(LedgerCategory.MATCHDAY),
+            prizeMoney = sumOf(LedgerCategory.PRIZE_MONEY) + sumOf(LedgerCategory.COMPETITION_REVENUE),
+            wageSpend = -sumOf(LedgerCategory.WAGES),
+            sponsorshipRevenue = sumOf(LedgerCategory.SPONSORSHIP),
+            stadiumSpend = -sumOf(LedgerCategory.STADIUM),
+            otherIncome = sumOf(LedgerCategory.BOARD_INJECTION) +
+                sumOf(LedgerCategory.BOARD_ADJUSTMENT) +
+                sumOf(LedgerCategory.OTHER),
+            monthly = monthly
         )
     }
+
+    private val MONTH_SHORT = listOf(
+        "Aug", "Sep", "Oct", "Nov", "Dec", "Jan",
+        "Feb", "Mar", "Apr", "May", "Jun", "Jul"
+    )
 }

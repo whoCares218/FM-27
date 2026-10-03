@@ -50,7 +50,10 @@ import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
 import com.footymanager.simulator.ui.components.FmPrimaryButton
 import com.footymanager.simulator.ui.components.FmSecondaryButton
+import com.footymanager.simulator.ui.components.ChartBar
+import com.footymanager.simulator.ui.components.CompositionBar
 import com.footymanager.simulator.ui.components.Fmt
+import com.footymanager.simulator.ui.components.MonthlyBarChart
 import com.footymanager.simulator.ui.components.InfoPill
 import com.footymanager.simulator.ui.components.RatingBadge
 import com.footymanager.simulator.ui.components.SectionHeader
@@ -181,6 +184,32 @@ fun FinancesScreen(career: Career) {
 
         item {
             FmCard {
+                SectionHeader("Season ${career.season} summary")
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell("Income", Fmt.money(summary.totalIncome), valueColor = StatColors.elite)
+                    StatCell("Expense", Fmt.money(summary.totalExpense), valueColor = StatColors.bad)
+                    StatCell(
+                        "Net",
+                        Fmt.money(summary.netSeason),
+                        valueColor = if (summary.netSeason >= 0) StatColors.elite else StatColors.bad
+                    )
+                }
+            }
+        }
+
+        item {
+            FmCard {
+                SectionHeader("Monthly cash flow")
+                Spacer(Modifier.height(10.dp))
+                MonthlyBarChart(
+                    bars = summary.monthly.map { ChartBar(it.label, it.income, it.expense) }
+                )
+            }
+        }
+
+        item {
+            FmCard {
                 SectionHeader("Wages")
                 Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -227,17 +256,37 @@ fun FinancesScreen(career: Career) {
 
         item {
             FmCard {
-                SectionHeader("Revenue")
+                SectionHeader("Where the money comes from")
                 Spacer(Modifier.height(10.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    StatCell("Matchday", Fmt.money(summary.matchdayRevenue), valueColor = StatColors.elite)
-                    StatCell("Prize money", Fmt.money(summary.prizeMoney), valueColor = StatColors.elite)
-                    StatCell(
-                        "Stadium",
-                        "${"%,d".format(career.userClub.stadiumCapacity)}",
-                        valueColor = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                CompositionBar(
+                    segments = listOf(
+                        "Matchday" to summary.matchdayRevenue.coerceAtLeast(0),
+                        "Prize money" to summary.prizeMoney.coerceAtLeast(0),
+                        "Sponsorship" to summary.sponsorshipRevenue.coerceAtLeast(0),
+                        "Player sales" to summary.transferIncome.coerceAtLeast(0),
+                        "Other" to summary.otherIncome.coerceAtLeast(0)
+                    ).filter { it.second > 0 }
+                )
+            }
+        }
+
+        item {
+            FmCard {
+                SectionHeader("Where the money goes")
+                Spacer(Modifier.height(10.dp))
+                CompositionBar(
+                    segments = listOf(
+                        "Wages" to summary.wageSpend.coerceAtLeast(0),
+                        "Transfers" to summary.transferSpend.coerceAtLeast(0),
+                        "Stadium" to summary.stadiumSpend.coerceAtLeast(0)
+                    ).filter { it.second > 0 }
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Stadium capacity: ${"%,d".format(career.userClub.stadiumCapacity)} seats.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 

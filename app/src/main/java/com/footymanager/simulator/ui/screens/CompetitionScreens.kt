@@ -48,6 +48,7 @@ import com.footymanager.simulator.ui.components.Fmt
 import com.footymanager.simulator.ui.components.InfoPill
 import com.footymanager.simulator.ui.components.ScreenTitle
 import com.footymanager.simulator.ui.components.SectionHeader
+import com.footymanager.simulator.ui.components.StadiumIllustration
 import com.footymanager.simulator.ui.components.StatCell
 import com.footymanager.simulator.ui.theme.StatColors
 
@@ -427,6 +428,12 @@ fun StadiumScreen(
 
         item {
             FmCard {
+                StadiumIllustration(club = career.userClub, stadium = stadium)
+            }
+        }
+
+        item {
+            FmCard {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -578,8 +585,10 @@ fun SponsorsScreen(
         val offers = career.sponsorOffers
         if (offers.isNotEmpty()) {
             item { SectionHeader("Offers on the table") }
+            val bestGuaranteed = offers.maxByOrNull { it.upfront + it.seasonal }?.id
+            val bestCeiling = offers.maxByOrNull { it.upfront + it.seasonal + it.bonusAmount }?.id
             items(offers, key = { it.id }) { offer ->
-                FmCard {
+                FmCard(accent = if (offer.id == bestGuaranteed) StatColors.elite else null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = offer.name,
@@ -589,7 +598,18 @@ fun SponsorsScreen(
                         )
                         InfoPill(offer.tier)
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
+                    if (offer.id == bestGuaranteed || offer.id == bestCeiling) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (offer.id == bestGuaranteed) {
+                                InfoPill("Best guaranteed", color = StatColors.elite)
+                            }
+                            if (offer.id == bestCeiling) {
+                                InfoPill("Highest ceiling", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -597,6 +617,22 @@ fun SponsorsScreen(
                         StatCell("Upfront", Fmt.money(offer.upfront))
                         StatCell("Seasonal", Fmt.money(offer.seasonal))
                         StatCell("Bonus", Fmt.money(offer.bonusAmount))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        StatCell(
+                            "Guaranteed total",
+                            Fmt.money(offer.upfront + offer.seasonal),
+                            valueColor = StatColors.elite
+                        )
+                        StatCell(
+                            "Maximum total",
+                            Fmt.money(offer.upfront + offer.seasonal + offer.bonusAmount),
+                            valueColor = MaterialTheme.colorScheme.primary
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
