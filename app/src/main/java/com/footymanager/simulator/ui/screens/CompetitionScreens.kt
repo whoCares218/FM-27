@@ -1,6 +1,7 @@
 package com.footymanager.simulator.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -54,7 +56,10 @@ import com.footymanager.simulator.ui.theme.StatColors
  * the user's European fixtures, and the knockout bracket as it develops.
  */
 @Composable
-fun ChampionsLeagueScreen(career: Career) {
+fun ChampionsLeagueScreen(
+    career: Career,
+    onOpenClub: (Long) -> Unit = {}
+) {
     val state = career.championsLeague
 
     LazyColumn(
@@ -115,83 +120,86 @@ fun ChampionsLeagueScreen(career: Career) {
         }
 
         item { SectionHeader("League phase table") }
-        items(state.sortedTable(), key = { it.clubId }) { row ->
-            val position = state.positionOf(row.clubId)
-            val isUser = row.clubId == career.userClubId
-            UclTableRow(
-                position = position,
-                clubName = career.club(row.clubId)?.name ?: "Unknown",
-                played = row.played,
-                goalDifference = row.goalDifference,
-                points = row.points,
-                status = state.statusOf(row.clubId),
-                isUser = isUser
-            )
+        item {
+            FmCard(padding = 10.dp) {
+                Text(
+                    text = "Positions 1–8 go straight to the Round of 16. 9–24 enter the knockout play-offs.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                val sorted = state.sortedTable()
+                sorted.forEachIndexed { index, row ->
+                    val position = index + 1
+                    val isUser = row.clubId == career.userClubId
+                    UclTableRow(
+                        position = position,
+                        clubName = career.club(row.clubId)?.name ?: "Unknown",
+                        played = row.played,
+                        goalDifference = row.goalDifference,
+                        points = row.points,
+                        status = state.statusOf(row.clubId),
+                        isUser = isUser,
+                        onClick = { onOpenClub(row.clubId) }
+                    )
+                    if (position == 8 || position == 24) {
+                        QualificationLine(
+                            label = if (position == 8) "Round of 16" else "Play-off line",
+                            color = if (position == 8) StatColors.elite else StatColors.average
+                        )
+                    }
+                }
+            }
         }
 
         if (state.ties.isNotEmpty()) {
             item { SectionHeader("Knockout bracket") }
-            val rounds = KnockoutRound.entries
+            val rounds = KnockoutRound.entries.filter { round -> state.ties.any { it.round == round } }
             for (round in rounds) {
                 val ties = state.ties.filter { it.round == round }
-                if (ties.isEmpty()) continue
                 item {
                     FmCard {
-                        Text(
-                            text = round.label,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = round.label,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = if (round.legs == 2) "Two legs" else "Single match",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Spacer(Modifier.height(8.dp))
                         ties.forEach { tie ->
-                            val high = career.club(tie.highSeedClubId)?.shortName ?: "-"
-                            val low = career.club(tie.lowSeedClubId)?.shortName ?: "-"
-                            val userInvolved = tie.highSeedClubId == career.userClubId ||
-                                tie.lowSeedClubId == career.userClubId
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            BracketTieRow(tie = tie, career = career)
+                        }
+                    }
+                }
+            }
+            if (state.winnerClubId != null) {
+                item {
+                    FmCard(accent = StatColors.elite) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Outlined.EmojiEvents,
+                                contentDescription = null,
+                                tint = StatColors.elite,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
                                 Text(
-                                    text = high,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (tie.winnerClubId == tie.highSeedClubId)
-                                        StatColors.elite else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "${tie.highSeedAggregate} - ${tie.lowSeedAggregate}",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                )
-                                Text(
-                                    text = low,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (tie.winnerClubId == tie.lowSeedClubId)
-                                        StatColors.elite else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                            if (tie.shootoutHigh != null) {
-                                Text(
-                                    text = "Won ${tie.shootoutHigh}-${tie.shootoutLow} on penalties",
+                                    text = "Champions League winners",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            }
-                            if (userInvolved) {
                                 Text(
-                                    text = "Your tie",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
+                                    text = career.club(state.winnerClubId)?.name ?: "-",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -199,6 +207,120 @@ fun ChampionsLeagueScreen(career: Career) {
                 }
             }
         }
+    }
+}
+
+/** A horizontal qualification cut-off line inside the league-phase table. */
+@Composable
+private fun QualificationLine(label: String, color: androidx.compose.ui.graphics.Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(color.copy(alpha = 0.5f))
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(color.copy(alpha = 0.5f))
+        )
+    }
+}
+
+/** One knockout tie, showing both legs, aggregate and the winner. */
+@Composable
+private fun BracketTieRow(tie: com.footymanager.simulator.domain.model.KnockoutTie, career: Career) {
+    val high = career.club(tie.highSeedClubId)
+    val low = career.club(tie.lowSeedClubId)
+    val userInvolved = tie.highSeedClubId == career.userClubId ||
+        tie.lowSeedClubId == career.userClubId
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(
+                if (userInvolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                else MaterialTheme.colorScheme.surfaceContainer
+            )
+            .padding(8.dp)
+    ) {
+        TieSide(
+            club = high,
+            aggregate = tie.highSeedAggregate,
+            isWinner = tie.winnerClubId == tie.highSeedClubId,
+            isDecided = tie.decided
+        )
+        Spacer(Modifier.height(4.dp))
+        TieSide(
+            club = low,
+            aggregate = tie.lowSeedAggregate,
+            isWinner = tie.winnerClubId == tie.lowSeedClubId,
+            isDecided = tie.decided
+        )
+        if (tie.shootoutHigh != null && tie.shootoutLow != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Won ${tie.shootoutHigh}-${tie.shootoutLow} on penalties",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (userInvolved) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Your tie",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun TieSide(
+    club: com.footymanager.simulator.domain.model.Club?,
+    aggregate: Int,
+    isWinner: Boolean,
+    isDecided: Boolean
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (club != null) {
+            ClubCrest(club = club, size = 22.dp)
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(
+            text = club?.name ?: "-",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isWinner) FontWeight.Bold else FontWeight.Normal,
+            color = when {
+                !isDecided -> MaterialTheme.colorScheme.onSurface
+                isWinner -> StatColors.elite
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = "$aggregate",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (isWinner) FontWeight.Bold else FontWeight.Normal,
+            color = if (isWinner) StatColors.elite else MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 
@@ -210,7 +332,8 @@ private fun UclTableRow(
     goalDifference: Int,
     points: Int,
     status: UclStatus,
-    isUser: Boolean
+    isUser: Boolean,
+    onClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -219,6 +342,9 @@ private fun UclTableRow(
             .background(
                 if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                 else MaterialTheme.colorScheme.surfaceContainer
+            )
+            .then(
+                if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
             )
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically

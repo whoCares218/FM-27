@@ -406,7 +406,10 @@ private fun AppNavHost(
 
         composable(Routes.CHAMPIONS_LEAGUE) {
             if (career != null) {
-                com.footymanager.simulator.ui.screens.ChampionsLeagueScreen(career = career)
+                com.footymanager.simulator.ui.screens.ChampionsLeagueScreen(
+                    career = career,
+                    onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
+                )
             }
         }
 
