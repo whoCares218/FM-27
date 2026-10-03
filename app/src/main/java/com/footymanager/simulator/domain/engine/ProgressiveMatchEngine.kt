@@ -1,9 +1,13 @@
 package com.footymanager.simulator.domain.engine
 
 import com.footymanager.simulator.domain.model.InjuryType
+import com.footymanager.simulator.domain.model.InProgressMatchState
 import com.footymanager.simulator.domain.model.MatchEvent
 import com.footymanager.simulator.domain.model.MatchEventType
+import com.footymanager.simulator.domain.model.MatchModePersist
+import com.footymanager.simulator.domain.model.MatchPhasePersist
 import com.footymanager.simulator.domain.model.MatchResult
+import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.TeamMatchStats
 import kotlin.math.exp
 import kotlin.math.max
@@ -35,13 +39,22 @@ import kotlin.random.Random
 class ProgressiveMatchEngine(
     val home: MatchTeamInput,
     val away: MatchTeamInput,
-    private val random: Random,
+    seedRandom: Random,
     private val homeAdvantage: Boolean = true,
     private val determinism: Double = 1.0,
     private val rules: MatchRules = MatchRules.LEAGUE,
     /** Draws the penalty shootout when extra time ends level. */
     private val shootout: (Random) -> Pair<Int, Int> = { ChampionsLeagueEngine.simulateShootout(it) }
 ) {
+    /**
+     * The generator is always a [SerializableRandom] so the match can be paused
+     * and resumed exactly. A caller-supplied [Random] seeds it; the returned
+     * engine then owns the stream from there.
+     */
+    private val rng: SerializableRandom = when (seedRandom) {
+        is SerializableRandom -> seedRandom
+        else -> SerializableRandom(seedRandom.nextLong())
+    }
 
     // ------------------------------------------------------------------ state
 
@@ -205,7 +218,7 @@ class ProgressiveMatchEngine(
         if (phase != MatchPhase.HALF_TIME) return emptyList()
         phase = MatchPhase.SECOND_HALF
         minute = 45
-        secondHalfStoppage = 2 + random.nextInt(0, 6)
+        secondHalfStoppage = 2 + rng.nextInt(0, 6)
         val out = listOf(
             MatchEvent(45, MatchEventType.INFO, home.clubId, detail = "Second half under way")
         )
@@ -292,6 +305,9 @@ class ProgressiveMatchEngine(
         val changeMinute = if (atHalfTime) 45 else minute.coerceAtLeast(1)
         offMinutes[playerOffId] = changeMinute
         onAtMinute[playerOnId] = changeMinute
+        // A substitute must be tracked so their goals, cards and rating are
+        // recorded even though they were not in the starting XI.
+        registerSubstitute(updated, on)
         if (isHome) activeHome = updated else activeAway = updated
 
         val event = MatchEvent(
@@ -342,6 +358,7 @@ class ProgressiveMatchEngine(
             subsMade[clubId] = (subsMade[clubId] ?: 0) + 1
             val onPlayer = updated.squadById[onId]
             val offPlayer = updated.squadById[offId]
+            onPlayer?.let { registerSubstitute(updated, it) }
             if (onPlayer != null && offPlayer != null) {
                 out += MatchEvent(
                     minute = changeMinute,
@@ -371,7 +388,7 @@ class ProgressiveMatchEngine(
     }
 
     private fun firstHalfStoppage(): Int {
-        if (firstHalfStoppageValue == 0) firstHalfStoppageValue = 1 + random.nextInt(0, 4)
+        if (firstHalfStoppageValue == 0) firstHalfStoppageValue = 1 + rng.nextInt(0, 4)
         return firstHalfStoppageValue
     }
 
@@ -414,15 +431,15 @@ class ProgressiveMatchEngine(
 
         // ---- Shots ----
         val hShotsNow = MatchEngine.poisson(
-            (hXgPer90 / 90.0) * 7.4 * hInput.tactics.chanceVolumeMultiplier, random
+            (hXgPer90 / 90.0) * 7.4 * hInput.tactics.chanceVolumeMultiplier, rng
         )
         val aShotsNow = MatchEngine.poisson(
-            (aXgPer90 / 90.0) * 7.4 * aInput.tactics.chanceVolumeMultiplier, random
+            (aXgPer90 / 90.0) * 7.4 * aInput.tactics.chanceVolumeMultiplier, rng
         )
         homeShots += hShotsNow
         awayShots += aShotsNow
-        homeOnTarget += MatchEngine.poisson(hShotsNow * 0.36, random)
-        awayOnTarget += MatchEngine.poisson(aShotsNow * 0.36, random)
+        homeOnTarget += MatchEngine.poisson(hShotsNow * 0.36, rng)
+        awayOnTarget += MatchEngine.poisson(aShotsNow * 0.36, rng)
 
         // ---- Goals ----
         val hGoalsNow = rollGoals((hXgPer90 / 90.0) * hFatigue)
@@ -439,13 +456,13 @@ class ProgressiveMatchEngine(
         }
 
         // ---- Fouls and cards ----
-        val hFoulsNow = MatchEngine.poisson(0.13 * hInput.tactics.foulMultiplier, random)
-        val aFoulsNow = MatchEngine.poisson(0.13 * aInput.tactics.foulMultiplier, random)
+        val hFoulsNow = MatchEngine.poisson(0.13 * hInput.tactics.foulMultiplier, rng)
+        val aFoulsNow = MatchEngine.poisson(0.13 * aInput.tactics.foulMultiplier, rng)
         homeFouls += hFoulsNow
         awayFouls += aFoulsNow
 
-        repeat(MatchEngine.poisson(hFoulsNow / 6.0, random)) {
-            val booked = MatchEngine.pickDefensivePlayer(playersOf(hInput), random) ?: return@repeat
+        repeat(MatchEngine.poisson(hFoulsNow / 6.0, rng)) {
+            val booked = MatchEngine.pickDefensivePlayer(playersOf(hInput), rng) ?: return@repeat
             homeYellows++
             tracker.addYellow(booked.id)
             out += MatchEvent(
@@ -453,8 +470,8 @@ class ProgressiveMatchEngine(
                 playerId = booked.id, playerName = booked.name, detail = "Booked for a foul"
             )
         }
-        repeat(MatchEngine.poisson(aFoulsNow / 6.0, random)) {
-            val booked = MatchEngine.pickDefensivePlayer(playersOf(aInput), random) ?: return@repeat
+        repeat(MatchEngine.poisson(aFoulsNow / 6.0, rng)) {
+            val booked = MatchEngine.pickDefensivePlayer(playersOf(aInput), rng) ?: return@repeat
             awayYellows++
             tracker.addYellow(booked.id)
             out += MatchEvent(
@@ -464,40 +481,40 @@ class ProgressiveMatchEngine(
         }
 
         // ---- Red cards (rare) ----
-        if (random.nextDouble() < 0.0016 * hInput.tactics.aggression.foulBias) {
-            MatchEngine.pickDefensivePlayer(playersOf(hInput), random)?.let { sent ->
+        if (rng.nextDouble() < 0.0016 * hInput.tactics.aggression.foulBias) {
+            MatchEngine.pickDefensivePlayer(playersOf(hInput), rng)?.let { sent ->
                 out += sendOff(home.clubId, sent.id, sent.name, secondYellow = false)
             }
         }
-        if (random.nextDouble() < 0.0016 * aInput.tactics.aggression.foulBias) {
-            MatchEngine.pickDefensivePlayer(playersOf(aInput), random)?.let { sent ->
+        if (rng.nextDouble() < 0.0016 * aInput.tactics.aggression.foulBias) {
+            MatchEngine.pickDefensivePlayer(playersOf(aInput), rng)?.let { sent ->
                 out += sendOff(away.clubId, sent.id, sent.name, secondYellow = false)
             }
         }
 
         // ---- Injuries ----
-        if (random.nextDouble() < 0.0035 * hInput.tactics.fatigueMultiplier) {
-            MatchEngine.pickOutfielder(playersOf(hInput), random)?.let { victim ->
+        if (rng.nextDouble() < 0.0035 * hInput.tactics.fatigueMultiplier) {
+            MatchEngine.pickOutfielder(playersOf(hInput), rng)?.let { victim ->
                 out += injure(home.clubId, victim.id, victim.name)
             }
         }
-        if (random.nextDouble() < 0.0035 * aInput.tactics.fatigueMultiplier) {
-            MatchEngine.pickOutfielder(playersOf(aInput), random)?.let { victim ->
+        if (rng.nextDouble() < 0.0035 * aInput.tactics.fatigueMultiplier) {
+            MatchEngine.pickOutfielder(playersOf(aInput), rng)?.let { victim ->
                 out += injure(away.clubId, victim.id, victim.name)
             }
         }
 
         // ---- Corners ----
-        homeCorners += MatchEngine.poisson(0.05 * (hPossession / 50.0), random)
-        awayCorners += MatchEngine.poisson(0.05 * (aPossession / 50.0), random)
+        homeCorners += MatchEngine.poisson(0.05 * (hPossession / 50.0), rng)
+        awayCorners += MatchEngine.poisson(0.05 * (aPossession / 50.0), rng)
 
         // ---- Dangerous attacks ----
         // Entries into the final third scale with attacking intent, tempo, the
         // quality gap and the possession share, so they track what a viewer sees.
         val hThreat = hXgPer90 / 90.0 * hInput.tactics.chanceVolumeMultiplier
         val aThreat = aXgPer90 / 90.0 * aInput.tactics.chanceVolumeMultiplier
-        homeDangerous += MatchEngine.poisson(0.45 * hThreat * (hPossession / 50.0) + 0.05, random)
-        awayDangerous += MatchEngine.poisson(0.45 * aThreat * (aPossession / 50.0) + 0.05, random)
+        homeDangerous += MatchEngine.poisson(0.45 * hThreat * (hPossession / 50.0) + 0.05, rng)
+        awayDangerous += MatchEngine.poisson(0.45 * aThreat * (aPossession / 50.0) + 0.05, rng)
 
         updateDomination(
             hPossession.toDouble(), hShotsNow, aShotsNow, hHandicap, aHandicap, hStrength, aStrength
@@ -533,8 +550,11 @@ class ProgressiveMatchEngine(
         // Quality gap: a small nudge, so a much better side gradually takes over.
         val qualitySignal = (hStrength.overall - aStrength.overall) * 0.35
 
-        // Red cards are decisive: a ten-man side cedes control.
-        val redSignal = (aHandicap - hHandicap) * 40.0
+        // Red cards are decisive: a ten-man side cedes control. Because the
+        // handicap is lowered for the side that is a man down, the difference
+        // must be home-minus-away so a home dismissal pushes the bar down and an
+        // away dismissal pushes it up.
+        val redSignal = (hHandicap - aHandicap) * 40.0
 
         // Recent shot burst gives an immediate kick without flipping the bar.
         val burst = (hShotsNow - aShotsNow) * 2.2
@@ -550,10 +570,17 @@ class ProgressiveMatchEngine(
     private fun playersOf(input: MatchTeamInput): List<MatchPlayer> =
         TeamStrengthCalculator.toMatchPlayers(input.squadById, input.selection, input.tactics.formation)
 
+    /** Adds a newly introduced substitute to the rating tracker. */
+    private fun registerSubstitute(input: MatchTeamInput, player: Player) {
+        val matchPlayers = playersOf(input)
+        val mp = matchPlayers.firstOrNull { it.id == player.id } ?: return
+        tracker.register(listOf(mp), input.clubId == home.clubId)
+    }
+
     private fun goalEvent(clubId: Long, active: MatchTeamInput, minute: Int): MatchEvent {
         val players = playersOf(active)
-        val scorer = MatchEngine.pickAttacker(players, random)
-        val assister = MatchEngine.pickAssister(players, scorer, random)
+        val scorer = MatchEngine.pickAttacker(players, rng)
+        val assister = MatchEngine.pickAssister(players, scorer, rng)
         if (scorer != null) tracker.addGoal(scorer.id)
         if (assister != null) tracker.addAssist(assister.id)
         return MatchEvent(
@@ -598,7 +625,7 @@ class ProgressiveMatchEngine(
 
     private fun randomInjuryType(): InjuryType {
         val pool = InjuryType.matchInjuries
-        return pool[random.nextInt(pool.size)]
+        return pool[rng.nextInt(pool.size)]
     }
 
     private fun rollGoals(rate: Double): Int {
@@ -609,7 +636,7 @@ class ProgressiveMatchEngine(
         var p = 1.0
         do {
             k++
-            p *= random.nextDouble()
+            p *= rng.nextDouble()
         } while (p > limit && k < 6)
         return k - 1
     }
@@ -662,7 +689,7 @@ class ProgressiveMatchEngine(
             }
             MatchPhase.EXTRA_TIME_SECOND -> {
                 if (homeGoals == awayGoals && rules.allowShootout) {
-                    val (sh, sa) = shootout(random)
+                    val (sh, sa) = shootout(rng)
                     shootoutHome = sh
                     shootoutAway = sa
                     out += MatchEvent(
@@ -729,6 +756,7 @@ class ProgressiveMatchEngine(
             val changeMinute = if (atHalfTime) 45 else minute.coerceAtLeast(1)
             offMinutes[change.playerOffId] = changeMinute
             onAtMinute[change.playerOnId] = changeMinute
+            registerSubstitute(updated, on)
 
             out += MatchEvent(
                 minute = changeMinute,
@@ -823,7 +851,7 @@ class ProgressiveMatchEngine(
             (hStats.possession - 50) * 0.6
         return (0 until blocks).map { i ->
             val wave = kotlin.math.sin(i * 1.1) * 12.0
-            (base + wave + random.nextDouble(-8.0, 8.0)).coerceIn(-100.0, 100.0).roundToInt()
+            (base + wave + rng.nextDouble(-8.0, 8.0)).coerceIn(-100.0, 100.0).roundToInt()
         }
     }
 
@@ -831,14 +859,12 @@ class ProgressiveMatchEngine(
     fun toResult(matchId: Long, leagueId: String, matchday: Int): MatchResult {
         val (hStats, aStats) = stats()
         val ratings = tracker.finish(
-            homePlayers = playersOf(home),
-            awayPlayers = playersOf(away),
             homeStats = hStats,
             awayStats = aStats,
-            homeStrength = effectiveStrength(home),
-            awayStrength = effectiveStrength(away),
-            homeSelection = home.selection,
-            awaySelection = away.selection
+            homeStrength = effectiveStrength(activeHome),
+            awayStrength = effectiveStrength(activeAway),
+            homeSelection = activeHome.selection,
+            awaySelection = activeAway.selection
         )
         return MatchResult(
             matchId = matchId,
@@ -862,6 +888,158 @@ class ProgressiveMatchEngine(
 
     /** The regular-time score, used to seed a knockout tie's aggregate. */
     fun regularTimeScore(): Pair<Int, Int> = homeGoalsRegular to awayGoalsRegular
+
+    // ------------------------------------------------------------- persistence
+
+    /**
+     * Captures the entire live state so the match can be paused, serialized and
+     * later resumed with byte-identical future events. Every mutable field the
+     * simulation reads is included, plus the random generator's state.
+     */
+    fun snapshot(
+        matchId: Long,
+        leagueId: String,
+        matchday: Int,
+        userIsHome: Boolean,
+        mode: MatchModePersist = MatchModePersist.PLAY,
+        liveXi: List<Long> = emptyList(),
+        liveBench: List<Long> = emptyList()
+    ): InProgressMatchState = InProgressMatchState(
+        matchId = matchId,
+        leagueId = leagueId,
+        matchday = matchday,
+        homeClubId = home.clubId,
+        awayClubId = away.clubId,
+        userIsHome = userIsHome,
+        mode = mode,
+        phase = phase.toPersist(),
+        minute = minute,
+        homeGoals = homeGoals,
+        awayGoals = awayGoals,
+        homeGoalsRegular = homeGoalsRegular,
+        awayGoalsRegular = awayGoalsRegular,
+        homeEtGoals = homeEtGoals,
+        awayEtGoals = awayEtGoals,
+        shootoutHome = shootoutHome,
+        shootoutAway = shootoutAway,
+        homeShots = homeShots,
+        awayShots = awayShots,
+        homeOnTarget = homeOnTarget,
+        awayOnTarget = awayOnTarget,
+        homeFouls = homeFouls,
+        awayFouls = awayFouls,
+        homeCorners = homeCorners,
+        awayCorners = awayCorners,
+        homeYellows = homeYellows,
+        awayYellows = awayYellows,
+        homeReds = homeReds,
+        awayReds = awayReds,
+        homePossessionSum = homePossessionSum,
+        possessionSamples = possessionSamples,
+        homeDangerous = homeDangerous,
+        awayDangerous = awayDangerous,
+        homeDomination = homeDomination,
+        firstHalfStoppage = firstHalfStoppageValue,
+        secondHalfStoppage = secondHalfStoppage,
+        events = events.toList(),
+        offMinutes = offMinutes.toMap(),
+        onAtMinute = onAtMinute.toMap(),
+        sentOffClubs = sentOffClubs.toList(),
+        subsMade = subsMade.toMap(),
+        windowsUsed = windowsUsed.toMap(),
+        ratings = tracker.snapshot(),
+        homeInput = activeHome.toSnapshot(),
+        awayInput = activeAway.toSnapshot(),
+        liveXi = liveXi,
+        liveBench = liveBench,
+        allowExtraTime = rules.allowExtraTime,
+        allowShootout = rules.allowShootout,
+        maxSubstitutions = rules.maxSubstitutions,
+        maxSubstitutionWindows = rules.maxSubstitutionWindows,
+        determinism = determinism,
+        homeAdvantage = homeAdvantage,
+        rngState = rng.state,
+        suspended = false
+    )
+
+    /** Captures a snapshot from a serializable state, restoring every field. */
+    fun restoreFrom(state: InProgressMatchState) {
+        phase = state.phase.toEngine()
+        minute = state.minute
+        homeGoals = state.homeGoals
+        awayGoals = state.awayGoals
+        homeGoalsRegular = state.homeGoalsRegular
+        awayGoalsRegular = state.awayGoalsRegular
+        homeEtGoals = state.homeEtGoals
+        awayEtGoals = state.awayEtGoals
+        shootoutHome = state.shootoutHome
+        shootoutAway = state.shootoutAway
+        homeShots = state.homeShots
+        awayShots = state.awayShots
+        homeOnTarget = state.homeOnTarget
+        awayOnTarget = state.awayOnTarget
+        homeFouls = state.homeFouls
+        awayFouls = state.awayFouls
+        homeCorners = state.homeCorners
+        awayCorners = state.awayCorners
+        homeYellows = state.homeYellows
+        awayYellows = state.awayYellows
+        homeReds = state.homeReds
+        awayReds = state.awayReds
+        homePossessionSum = state.homePossessionSum
+        possessionSamples = state.possessionSamples
+        homeDangerous = state.homeDangerous
+        awayDangerous = state.awayDangerous
+        homeDomination = state.homeDomination
+        firstHalfStoppageValue = state.firstHalfStoppage
+        secondHalfStoppage = state.secondHalfStoppage
+        events.clear()
+        events += state.events
+        offMinutes.clear()
+        offMinutes += state.offMinutes
+        onAtMinute.clear()
+        onAtMinute += state.onAtMinute
+        sentOffClubs.clear()
+        sentOffClubs += state.sentOffClubs
+        subsMade.clear()
+        subsMade += state.subsMade
+        windowsUsed.clear()
+        windowsUsed += state.windowsUsed
+        tracker.register(
+            TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation),
+            isHome = true
+        )
+        tracker.register(
+            TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation),
+            isHome = false
+        )
+        tracker.restore(state.ratings, home.squadById, away.squadById)
+        activeHome = state.homeInput.toInput(home.squadById, home.strengthMultiplier)
+        activeAway = state.awayInput.toInput(away.squadById, away.strengthMultiplier)
+        rng.restore(state.rngState)
+    }
+
+    private fun MatchPhase.toPersist(): MatchPhasePersist = when (this) {
+        MatchPhase.FIRST_HALF -> MatchPhasePersist.FIRST_HALF
+        MatchPhase.HALF_TIME -> MatchPhasePersist.HALF_TIME
+        MatchPhase.SECOND_HALF -> MatchPhasePersist.SECOND_HALF
+        MatchPhase.EXTRA_TIME_BREAK -> MatchPhasePersist.EXTRA_TIME_BREAK
+        MatchPhase.EXTRA_TIME_FIRST -> MatchPhasePersist.EXTRA_TIME_FIRST
+        MatchPhase.EXTRA_TIME_SECOND -> MatchPhasePersist.EXTRA_TIME_SECOND
+        MatchPhase.SHOOTOUT -> MatchPhasePersist.SHOOTOUT
+        MatchPhase.FINISHED -> MatchPhasePersist.FINISHED
+    }
+
+    private fun MatchPhasePersist.toEngine(): MatchPhase = when (this) {
+        MatchPhasePersist.FIRST_HALF -> MatchPhase.FIRST_HALF
+        MatchPhasePersist.HALF_TIME -> MatchPhase.HALF_TIME
+        MatchPhasePersist.SECOND_HALF -> MatchPhase.SECOND_HALF
+        MatchPhasePersist.EXTRA_TIME_BREAK -> MatchPhase.EXTRA_TIME_BREAK
+        MatchPhasePersist.EXTRA_TIME_FIRST -> MatchPhase.EXTRA_TIME_FIRST
+        MatchPhasePersist.EXTRA_TIME_SECOND -> MatchPhase.EXTRA_TIME_SECOND
+        MatchPhasePersist.SHOOTOUT -> MatchPhase.SHOOTOUT
+        MatchPhasePersist.FINISHED -> MatchPhase.FINISHED
+    }
 
     private fun round1(v: Double): Double = (v * 10).roundToInt() / 10.0
 }

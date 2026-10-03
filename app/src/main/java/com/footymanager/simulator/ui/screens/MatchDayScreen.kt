@@ -11,6 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -115,6 +116,9 @@ fun MatchDayScreen(
     onApplyLiveTactics: (Tactics) -> Unit,
     onContinueAfterMatch: () -> Unit
 ) {
+    // The system back gesture must go through the same path as the on-screen
+    // back button, or a match in progress would be abandoned by a stray swipe.
+    BackHandler(enabled = true) { onBack() }
     when {
         matchDay.isPlayed -> FinishedMatchView(matchDay, career, onContinueAfterMatch)
         !matchDay.started -> PreMatchView(career, matchDay, onBack, onStart)
