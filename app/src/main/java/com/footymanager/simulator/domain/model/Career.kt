@@ -89,7 +89,13 @@ data class Career(
     /** Fan mood (0..100). Drives attendance, atmosphere and gate receipts. */
     val fanSatisfaction: Int = 60,
     /** The manager's cumulative record across the whole career. */
-    val managerRecord: ManagerRecord = ManagerRecord()
+    val managerRecord: ManagerRecord = ManagerRecord(),
+    /**
+     * The live match currently paused or in progress, if any. Persisted with the
+     * career so interruption at minute 30 resumes at minute 30 rather than
+     * restarting. Null when no match is active.
+     */
+    val inProgressMatch: InProgressMatchState? = null
 ) {
     val userClub: Club
         get() = clubs.first { it.id == userClubId }

@@ -547,9 +547,20 @@ private fun AppNavHost(
                     career = career,
                     matchDay = matchDay,
                     onBack = {
-                        // Only advance the calendar if the match was actually played.
-                        if (matchDay.isPlayed) viewModel.advanceAfterMatch()
-                        else viewModel.cancelMatch()
+                        // Leaving a live match must never abandon it: the current
+                        // engine state is captured into the save and the next time
+                        // the fixture is opened it resumes at the same minute.
+                        // A finished match advances the calendar as before.
+                        if (matchDay.isPlayed) {
+                            viewModel.advanceAfterMatch()
+                        } else if (matchDay.started && !viewModel.hasLiveMatch) {
+                            // Paused, half-time or awaiting extra time: keep the
+                            // snapshot already written and just close the screen.
+                        } else if (matchDay.started) {
+                            viewModel.leaveMatch()
+                        } else {
+                            viewModel.cancelMatch()
+                        }
                         navController.popBackStack()
                     },
                     onStart = { mode -> viewModel.startMatch(mode) },

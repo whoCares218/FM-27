@@ -1,6 +1,9 @@
 package com.footymanager.simulator.domain.engine
 
+import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.PlayerMatchRating
+import com.footymanager.simulator.domain.model.RatingSnapshot
+import com.footymanager.simulator.domain.model.SlotRole
 import com.footymanager.simulator.domain.model.TeamMatchStats
 import com.footymanager.simulator.domain.model.TeamSelection
 import kotlin.math.roundToInt
@@ -8,6 +11,11 @@ import kotlin.math.roundToInt
 /**
  * Accumulates per-player contributions during a match and converts them into
  * match ratings on the familiar 4.0 - 10.0 scale.
+ *
+ * The tracker is self-contained: it stores the [MatchPlayer] it was told about,
+ * so a snapshot can rebuild the whole rating picture — including players who
+ * have already been substituted and are no longer on the pitch — without
+ * needing them to be re-resolved from the live XI.
  */
 internal class RatingTracker {
 
@@ -23,9 +31,62 @@ internal class RatingTracker {
 
     private val entries = mutableMapOf<Long, Entry>()
 
+    /**
+     * Ensures an entry exists for every player. Idempotent: re-registering a
+     * player leaves their accumulated counters intact, which is what lets a
+     * substitute be registered the moment they come on and lets a restored
+     * snapshot re-register the XI without losing goals already scored.
+     */
     fun register(players: List<MatchPlayer>, isHome: Boolean) {
         for (p in players) {
-            entries[p.id] = Entry(p, isHome)
+            entries.getOrPut(p.id) { Entry(p, isHome) }
+        }
+    }
+
+    /** Captures each entry so a snapshot can rebuild it exactly. */
+    fun snapshot(): List<RatingSnapshot> = entries.values.map {
+        RatingSnapshot(
+            playerId = it.player.id,
+            isHome = it.isHome,
+            goals = it.goals,
+            assists = it.assists,
+            yellows = it.yellows,
+            reds = it.reds,
+            minutes = it.minutes,
+            ability = it.player.effectiveAbility,
+            isGoalkeeper = it.player.isGoalkeeper
+        )
+    }
+
+    /**
+     * Rebuilds every entry from a snapshot using the supplied squad lookups, so
+     * players who are no longer on the pitch still contribute their rating.
+     */
+    fun restore(
+        snapshots: List<RatingSnapshot>,
+        homeSquad: Map<Long, Player>,
+        awaySquad: Map<Long, Player>
+    ) {
+        entries.clear()
+        for (s in snapshots) {
+            val squad = if (s.isHome) homeSquad else awaySquad
+            val player = squad[s.playerId] ?: continue
+            val matchPlayer = MatchPlayer(
+                player = player,
+                slot = if (s.isGoalkeeper) SlotRole.GK else SlotRole.CM,
+                effectiveAbility = s.ability,
+                conditionFactor = 1.0,
+                confidenceFactor = 1.0
+            )
+            entries[s.playerId] = Entry(
+                player = matchPlayer,
+                isHome = s.isHome,
+                goals = s.goals,
+                assists = s.assists,
+                yellows = s.yellows,
+                reds = s.reds,
+                minutes = s.minutes
+            )
         }
     }
 
@@ -51,8 +112,6 @@ internal class RatingTracker {
     }
 
     fun finish(
-        homePlayers: List<MatchPlayer>,
-        awayPlayers: List<MatchPlayer>,
         homeStats: TeamMatchStats,
         awayStats: TeamMatchStats,
         homeStrength: TeamStrength,
