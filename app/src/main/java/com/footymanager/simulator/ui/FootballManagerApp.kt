@@ -181,6 +181,21 @@ fun FootballManagerApp(viewModel: GameViewModel) {
     }
 }
 
+/**
+ * Rough "depth" of a route, used to decide the direction of the screen slide.
+ * Tabs sit at depth 1 and every detail screen is deeper, so pushing into a
+ * detail screen slides left and popping back slides right, matching the mental
+ * model of moving forward and back through the app.
+ */
+private fun routeDepth(route: String?): Int {
+    if (route == null) return 0
+    return when {
+        route == Routes.MAIN_MENU -> 0
+        BottomTab.entries.any { it.route == route } -> 1
+        else -> 2
+    }
+}
+
 @Composable
 private fun AppNavHost(
     navController: NavHostController,
@@ -197,8 +212,34 @@ private fun AppNavHost(
     NavHost(
         navController = navController,
         startDestination = Routes.MAIN_MENU,
-        enterTransition = { fadeIn(tween(180)) },
-        exitTransition = { fadeOut(tween(140)) }
+        enterTransition = {
+            val forward = routeDepth(targetState.destination.route) >= routeDepth(initialState.destination.route)
+            slideIntoContainer(
+                if (forward) AnimatedContentTransitionScope.SlideDirection.Left
+                else AnimatedContentTransitionScope.SlideDirection.Right,
+                tween(260)
+            ) + fadeIn(tween(220))
+        },
+        exitTransition = {
+            val forward = routeDepth(targetState.destination.route) >= routeDepth(initialState.destination.route)
+            slideOutOfContainer(
+                if (forward) AnimatedContentTransitionScope.SlideDirection.Left
+                else AnimatedContentTransitionScope.SlideDirection.Right,
+                tween(260)
+            ) + fadeOut(tween(170))
+        },
+        popEnterTransition = {
+            slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.Right,
+                tween(260)
+            ) + fadeIn(tween(220))
+        },
+        popExitTransition = {
+            slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.Left,
+                tween(260)
+            ) + fadeOut(tween(170))
+        }
     ) {
         // ------------------------------------------------------ main menu
         composable(Routes.MAIN_MENU) {

@@ -1128,6 +1128,7 @@ class GameViewModel(
     }
 
     fun makeOffer(playerId: Long, fee: Long, wage: Long, contractYears: Int) {
+        playSound(SoundCue.CLICK)
         updateCareer { career ->
             val player = career.player(playerId) ?: return@updateCareer career
             TransferEngine.createUserOffer(career, player, fee, wage, contractYears)
@@ -1136,6 +1137,12 @@ class GameViewModel(
 
     fun resolveOffer(offerId: Long) {
         updateCareer { career -> TransferEngine.resolveOffer(career, offerId, rngFor(career)) }
+        // Give the negotiation an audible outcome.
+        when (_career.value?.pendingOffers?.firstOrNull { it.id == offerId }?.status) {
+            OfferStatus.ACCEPTED, OfferStatus.COMPLETED -> playSound(SoundCue.SUCCESS)
+            OfferStatus.REJECTED, OfferStatus.COLLAPSED -> playSound(SoundCue.FAILURE)
+            else -> Unit
+        }
     }
 
     fun withdrawOffer(offerId: Long) {
