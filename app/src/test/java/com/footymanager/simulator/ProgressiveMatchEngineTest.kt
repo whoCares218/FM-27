@@ -46,7 +46,7 @@ class ProgressiveMatchEngineTest {
     private fun engine(seed: Long): ProgressiveMatchEngine = ProgressiveMatchEngine(
         home = buildInput(strongClub(), seed),
         away = buildInput(weakClub(), seed + 1),
-        random = Random(seed),
+        seedRandom = Random(seed),
         homeAdvantage = true,
         rules = MatchRules.LEAGUE
     )
@@ -191,13 +191,24 @@ class ProgressiveMatchEngineTest {
                     it.type == MatchEventType.RED_CARD || it.type == MatchEventType.SECOND_YELLOW
                 }
                 if (red != null) {
-                    // Let the game settle after the dismissal.
-                    repeat(8) { e.advance(1) }
+                    val atRed = e.domination().first
+                    // Let the game settle after the dismissal; the domination bar
+                    // eases toward its target rather than jumping.
+                    repeat(30) {
+                        e.advance(1)
+                        if (e.isHalfTime) e.beginSecondHalf()
+                    }
                     val (home, _) = e.domination()
                     if (red.clubId == e.home.clubId) {
-                        assertTrue("Ten-man home side should cede control, got $home", home < 50)
+                        assertTrue(
+                            "A ten-man home side must cede control: $atRed -> $home",
+                            home < atRed
+                        )
                     } else {
-                        assertTrue("Ten-man away side should cede control, got $home", home > 50)
+                        assertTrue(
+                            "A ten-man away side must hand control over: $atRed -> $home",
+                            home > atRed
+                        )
                     }
                     found = true
                 }
@@ -329,5 +340,39 @@ class ProgressiveMatchEngineTest {
 
         assertEquals(MatchRules.LEAGUE.maxSubstitutions, e.substitutionsMade(e.home.clubId))
         assertEquals("Half-time changes do not burn a window", 0, e.windowsConsumed(e.home.clubId))
+    }
+
+    @Test
+    fun `a snapshot restored mid-match completes identically to an unbroken one`() {
+        // Play half of a match continuously.
+        val whole = engine(seed = 4242)
+        repeat(45) {
+            whole.advance(1)
+            if (whole.isHalfTime) whole.beginSecondHalf()
+        }
+        val (savedHome, savedAway) = whole.stats()
+        val savedSnapshot = whole.snapshot(matchId = 1, leagueId = "ENG1", matchday = 1, userIsHome = true)
+
+        // Rebuild a brand-new engine with the same inputs, then apply the snapshot.
+        val resumed = engine(seed = 4242)
+        resumed.restoreFrom(savedSnapshot)
+        val (resumedHomeAtRestore, resumedAwayAtRestore) = resumed.stats()
+        assertEquals("Score must survive the snapshot", savedHome, resumedHomeAtRestore)
+        assertEquals("Opponent stats must survive the snapshot", savedAway, resumedAwayAtRestore)
+
+        // Advance both to full time from the same point, using different slice
+        // sizes to prove the result does not depend on how it is stepped.
+        playMatch(whole, chunk = 2)
+        playMatch(resumed, chunk = 7)
+        assertTrue(whole.isFinished)
+        assertTrue(resumed.isFinished)
+
+        val (wholeHome, wholeAway) = whole.stats()
+        val (resumedHome, resumedAway) = resumed.stats()
+        assertEquals("Final home goals must match", wholeHome.goals, resumedHome.goals)
+        assertEquals("Final away goals must match", wholeAway.goals, resumedAway.goals)
+        assertEquals("Possession must match", wholeHome.possession, resumedHome.possession)
+        assertEquals("Shots must match", wholeHome.shots, resumedHome.shots)
+        assertEquals("Corners must match", wholeHome.corners, resumedHome.corners)
     }
 }

@@ -22,7 +22,7 @@ import kotlin.random.Random
 object PlayerGenerator {
 
     /** The 24-player squad template used for every club. */
-    private val squadTemplate: List<Position> = listOf(
+    val squadTemplate: List<Position> = listOf(
         Position.GK, Position.GK, Position.GK,
         Position.RB, Position.RB,
         Position.LB, Position.LB,
@@ -40,7 +40,7 @@ object PlayerGenerator {
      * These create recognisable archetypes: fast wingers, physical centre backs,
      * creative tens and pure finishers.
      */
-    private fun profile(position: Position): IntArray = when (position) {
+    fun profile(position: Position): IntArray = when (position) {
         //            pace, shoot, pass, dribble, defend, physical, gk
         Position.GK -> intArrayOf(-20, -46, -10, -26, -30, -6, 4)
         Position.RB -> intArrayOf(5, -10, 0, -2, 3, 0, -60)
@@ -192,7 +192,13 @@ object PlayerGenerator {
         )
     }
 
-    private fun buildAttributes(
+    /**
+     * Builds a position-appropriate attribute spread for a target ability.
+     *
+     * Shared with [CuratedSquadBuilder] so hand-authored squads use exactly the
+     * same archetypes and variance as the generated ones.
+     */
+    fun buildAttributes(
         ability: Double,
         profile: IntArray,
         position: Position,

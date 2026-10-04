@@ -38,6 +38,38 @@ data class MatchTeamInput(
     val plannedSubstitutions: List<PlannedSubstitution> = emptyList()
 )
 
+/** Captures the on-pitch selection and tactics of one side for persistence. */
+fun MatchTeamInput.toSnapshot(): com.footymanager.simulator.domain.model.TeamInputSnapshot =
+    com.footymanager.simulator.domain.model.TeamInputSnapshot(
+        clubId = clubId,
+        clubName = clubName,
+        reputation = reputation,
+        tactics = tactics,
+        startingXi = selection.startingXi.map { it.playerId },
+        substitutes = selection.substitutes,
+        captainId = selection.captainId,
+        penaltyTakerId = selection.penaltyTakerId,
+        freeKickTakerId = selection.freeKickTakerId,
+        strengthMultiplier = strengthMultiplier
+    )
+
+/**
+ * Rebuilds a [MatchTeamInput] from a persisted snapshot using the career's
+ * current squad, so player lookups (and their live fitness) stay authoritative.
+ */
+fun com.footymanager.simulator.domain.model.TeamInputSnapshot.toInput(
+    squadById: Map<Long, Player>,
+    fallbackMultiplier: Double = 1.0
+): MatchTeamInput = MatchTeamInput(
+    clubId = clubId,
+    clubName = clubName,
+    reputation = reputation,
+    tactics = tactics,
+    selection = toSelection(),
+    squadById = squadById,
+    strengthMultiplier = if (strengthMultiplier != 0.0) strengthMultiplier else fallbackMultiplier
+)
+
 data class SimulatedMatch(
     val homeGoals: Int,
     val awayGoals: Int,
@@ -458,8 +490,6 @@ object MatchEngine {
 
         // ---- Player ratings ----
         val ratings = ratingsTracker.finish(
-            homePlayers = homePlayers,
-            awayPlayers = awayPlayers,
             homeStats = homeStats,
             awayStats = awayStats,
             homeStrength = homeStrength,

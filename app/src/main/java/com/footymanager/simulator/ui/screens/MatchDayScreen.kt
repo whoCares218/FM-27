@@ -11,6 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -63,14 +64,17 @@ import androidx.compose.ui.unit.dp
 import com.footymanager.simulator.domain.engine.MatchPhase
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
+import com.footymanager.simulator.domain.model.Aggression
 import com.footymanager.simulator.domain.model.DefensiveLine
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.MatchEventType
 import com.footymanager.simulator.domain.model.Mentality
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.PlayStyle
+import com.footymanager.simulator.domain.model.Pressing
 import com.footymanager.simulator.domain.model.Tactics
 import com.footymanager.simulator.domain.model.Tempo
+import com.footymanager.simulator.domain.model.Width
 import com.footymanager.simulator.ui.components.ClubBadge
 import com.footymanager.simulator.ui.components.DominationBar
 import com.footymanager.simulator.ui.components.FmCard
@@ -115,6 +119,9 @@ fun MatchDayScreen(
     onApplyLiveTactics: (Tactics) -> Unit,
     onContinueAfterMatch: () -> Unit
 ) {
+    // The system back gesture must go through the same path as the on-screen
+    // back button, or a match in progress would be abandoned by a stray swipe.
+    BackHandler(enabled = true) { onBack() }
     when {
         matchDay.isPlayed -> FinishedMatchView(matchDay, career, onContinueAfterMatch)
         !matchDay.started -> PreMatchView(career, matchDay, onBack, onStart)
@@ -123,7 +130,8 @@ fun MatchDayScreen(
             onMakeLiveSub, onApplyLiveTactics
         )
         else -> LiveMatchView(
-            career, matchDay, onBack, onPause, onResume, onMakeLiveSub, onContinueExtraTime
+            career, matchDay, onBack, onPause, onResume, onMakeLiveSub, onContinueExtraTime,
+            onApplyLiveTactics
         )
     }
 }
@@ -292,11 +300,13 @@ private fun LiveMatchView(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onMakeLiveSub: (Long, Long) -> Unit,
-    onContinueExtraTime: () -> Unit
+    onContinueExtraTime: () -> Unit,
+    onApplyLiveTactics: (Tactics) -> Unit
 ) {
     val home = if (matchDay.isHome) career.userClub else matchDay.opponent
     val away = if (matchDay.isHome) matchDay.opponent else career.userClub
     var showSubs by remember { mutableStateOf(false) }
+    var showTactics by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -458,11 +468,23 @@ private fun LiveMatchView(
                 } else {
                     FmSecondaryButton(
                         text = if (showSubs) "Hide substitutions" else "Make a substitution",
-                        onClick = { showSubs = !showSubs }
+                        onClick = { showSubs = !showSubs; if (showSubs) showTactics = false }
                     )
                     if (showSubs) {
                         Spacer(Modifier.height(12.dp))
                         SubstitutionPanel(career, matchDay, onMakeLiveSub)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    FmSecondaryButton(
+                        text = if (showTactics) "Hide tactics" else "Change tactics",
+                        onClick = { showTactics = !showTactics; if (showTactics) showSubs = false }
+                    )
+                    if (showTactics) {
+                        Spacer(Modifier.height(12.dp))
+                        LiveTacticsPanel(
+                            tactics = career.tactics,
+                            onApply = onApplyLiveTactics
+                        )
                     }
                     Spacer(Modifier.height(10.dp))
                     FmPrimaryButton(
@@ -724,7 +746,6 @@ private fun HalfTimeChangesCard(
 
 @Composable
 private fun HalfTimeTacticsCard(career: Career, onApplyLiveTactics: (Tactics) -> Unit) {
-    val tactics = career.tactics
     var expanded by remember { mutableStateOf(true) }
     FmCard {
         Row(
@@ -743,65 +764,7 @@ private fun HalfTimeTacticsCard(career: Career, onApplyLiveTactics: (Tactics) ->
         }
         if (expanded) {
             Spacer(Modifier.height(10.dp))
-            Text(
-                text = "FORMATION",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(Formation.all, key = { it.id }) { option ->
-                    val selected = option.id == tactics.formationId
-                    Text(
-                        text = option.name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (selected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.surfaceVariant
-                            )
-                            .clickable {
-                                onApplyLiveTactics(tactics.copy(formationId = option.id))
-                            }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            OptionSelector(
-                label = "Mentality",
-                options = Mentality.entries.toList(),
-                selected = tactics.mentality,
-                onSelect = { onApplyLiveTactics(tactics.copy(mentality = it)) },
-                optionLabel = { it.label }
-            )
-            Spacer(Modifier.height(12.dp))
-            OptionSelector(
-                label = "Style",
-                options = PlayStyle.entries.toList(),
-                selected = tactics.style,
-                onSelect = { onApplyLiveTactics(tactics.copy(style = it)) },
-                optionLabel = { it.label }
-            )
-            Spacer(Modifier.height(12.dp))
-            OptionSelector(
-                label = "Defensive line",
-                options = DefensiveLine.entries.toList(),
-                selected = tactics.defensiveLine,
-                onSelect = { onApplyLiveTactics(tactics.copy(defensiveLine = it)) },
-                optionLabel = { it.label }
-            )
-            Spacer(Modifier.height(12.dp))
-            OptionSelector(
-                label = "Tempo",
-                options = Tempo.entries.toList(),
-                selected = tactics.tempo,
-                onSelect = { onApplyLiveTactics(tactics.copy(tempo = it)) },
-                optionLabel = { it.label }
-            )
+            TacticsEditor(tactics = career.tactics, onApply = onApplyLiveTactics)
             Spacer(Modifier.height(10.dp))
             Text(
                 text = "Changes take effect for the second half.",
@@ -810,6 +773,111 @@ private fun HalfTimeTacticsCard(career: Career, onApplyLiveTactics: (Tactics) ->
             )
         }
     }
+}
+
+/** Live tactics editor shown when the manager pauses mid-match. */
+@Composable
+private fun LiveTacticsPanel(tactics: Tactics, onApply: (Tactics) -> Unit) {
+    Column {
+        TacticsEditor(tactics = tactics, onApply = onApply)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Changes apply immediately for the rest of the match.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * The full set of live tactical levers: formation, mentality, playing style,
+ * defensive line, tempo and the advanced instructions. Every selector maps to a
+ * real multiplier in the engine, so a change made here reshapes the rest of the
+ * match rather than only decorating the screen.
+ */
+@Composable
+private fun TacticsEditor(tactics: Tactics, onApply: (Tactics) -> Unit) {
+    Text(
+        text = "FORMATION",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(6.dp))
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(Formation.all, key = { it.id }) { option ->
+            val selected = option.id == tactics.formationId
+            Text(
+                text = option.name,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable { onApply(tactics.copy(formationId = option.id)) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            )
+        }
+    }
+    Spacer(Modifier.height(14.dp))
+    OptionSelector(
+        label = "Mentality",
+        options = Mentality.entries.toList(),
+        selected = tactics.mentality,
+        onSelect = { onApply(tactics.copy(mentality = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Playing style",
+        options = PlayStyle.entries.toList(),
+        selected = tactics.style,
+        onSelect = { onApply(tactics.copy(style = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Defensive line",
+        options = DefensiveLine.entries.toList(),
+        selected = tactics.defensiveLine,
+        onSelect = { onApply(tactics.copy(defensiveLine = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Tempo",
+        options = Tempo.entries.toList(),
+        selected = tactics.tempo,
+        onSelect = { onApply(tactics.copy(tempo = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Width",
+        options = Width.entries.toList(),
+        selected = tactics.width,
+        onSelect = { onApply(tactics.copy(width = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Pressing",
+        options = Pressing.entries.toList(),
+        selected = tactics.pressing,
+        onSelect = { onApply(tactics.copy(pressing = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Aggression",
+        options = Aggression.entries.toList(),
+        selected = tactics.aggression,
+        onSelect = { onApply(tactics.copy(aggression = it)) },
+        optionLabel = { it.label }
+    )
 }
 
 // ----------------------------------------------------------- substitutions

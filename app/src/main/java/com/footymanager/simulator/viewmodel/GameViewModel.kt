@@ -14,11 +14,13 @@ import com.footymanager.simulator.domain.data.SettingsStore
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
 import com.footymanager.simulator.domain.engine.FinanceEngine
 import com.footymanager.simulator.domain.engine.MatchPhase
+import com.footymanager.simulator.domain.engine.MatchRules
 import com.footymanager.simulator.domain.engine.MatchTeamInput
 import com.footymanager.simulator.domain.engine.PlannedSubstitution
 import com.footymanager.simulator.domain.engine.ProgressiveMatchEngine
 import com.footymanager.simulator.domain.engine.SeasonEngine
 import com.footymanager.simulator.domain.engine.SelectionRepair
+import com.footymanager.simulator.domain.engine.SerializableRandom
 import com.footymanager.simulator.domain.engine.SponsorshipEngine
 import com.footymanager.simulator.domain.engine.StadiumEngine
 import com.footymanager.simulator.domain.engine.TransferEngine
@@ -33,6 +35,9 @@ import com.footymanager.simulator.domain.model.Match
 import com.footymanager.simulator.domain.model.MatchEvent
 import com.footymanager.simulator.domain.model.MatchEventType
 import com.footymanager.simulator.domain.model.MatchResult
+import com.footymanager.simulator.domain.model.MatchModePersist
+import com.footymanager.simulator.domain.model.MatchPhasePersist
+import com.footymanager.simulator.domain.model.InProgressMatchState
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.SponsorOffer
@@ -310,7 +315,13 @@ class GameViewModel(
     }
 
     fun returnToMainMenu() {
+        // If a match is live, capture it first so the save reflects the current
+        // minute rather than the last settled matchday.
+        if (_engine != null) persistSnapshotIfAny()
         _career.value?.let { persist(it) }
+        engineJob?.cancel()
+        _engine = null
+        _engineCareer = null
         _career.value = null
         _matchDay.value = null
     }
@@ -515,6 +526,15 @@ class GameViewModel(
             !it.isPlayed && it.involves(career.userClubId) && it.matchday == matchday
         }
         val match = candidates.minByOrNull { it.competition.ordinal } ?: return false
+
+        // If a match is already paused mid-play for this fixture (the manager left
+        // and came back, or the app was restarted), rebuild the live state instead
+        // of presenting a fresh kick-off — the game resumes exactly where it was.
+        val pending = career.inProgressMatch
+        if (pending != null && pending.matchId == match.id && !pending.isFinished) {
+            return restoreInProgressMatch()
+        }
+
         val opponentId = match.opponentOf(career.userClubId)
         val opponent = career.clubOrThrow(opponentId)
         val opponentTactics = SeasonEngine.tacticsFor(career, opponentId, match.matchday)
@@ -527,6 +547,104 @@ class GameViewModel(
             pendingOtherFixtures = candidates.filter { it.id != match.id }
         )
         return true
+    }
+
+    /** True when a save holds a match that was left unfinished. */
+    val hasPendingMatch: Boolean get() = _career.value?.inProgressMatch?.isFinished == false
+
+    /**
+     * Rebuilds the live engine and match-day screen from a persisted snapshot.
+     * Every counter (score, stats, cards, substitutions, fitness, the random
+     * stream) comes straight from the snapshot, so the resumed match plays out
+     * identically to an uninterrupted one.
+     */
+    fun restoreInProgressMatch(): Boolean {
+        val career = _career.value ?: return false
+        val snap = career.inProgressMatch ?: return false
+        val match = career.fixtures.firstOrNull { it.id == snap.matchId }
+        if (match == null || match.isPlayed) {
+            _career.value = career.copy(inProgressMatch = null)
+            return false
+        }
+        val opponentId = match.opponentOf(career.userClubId)
+        val opponent = career.clubOrThrow(opponentId)
+        val (homeInput, awayInput) = SeasonEngine.buildTeamInputs(career, match)
+        val engine = ProgressiveMatchEngine(
+            home = homeInput,
+            away = awayInput,
+            seedRandom = SerializableRandom(snap.rngState),
+            homeAdvantage = snap.homeAdvantage,
+            determinism = snap.determinism,
+            rules = MatchRules(
+                allowExtraTime = snap.allowExtraTime,
+                allowShootout = snap.allowShootout,
+                maxSubstitutions = snap.maxSubstitutions,
+                maxSubstitutionWindows = snap.maxSubstitutionWindows
+            )
+        )
+        engine.restoreFrom(snap)
+        _engine = engine
+        _engineCareer = career
+        _liveXi = snap.liveXi
+        _liveBench = snap.liveBench
+
+        val (hStats, aStats) = engine.stats()
+        val (hg, ag) = engine.score()
+        val (domHome, _) = engine.domination()
+        val phase = engine.currentPhase
+        val feed = snap.events.map {
+            MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == career.userClubId)
+        }
+        _matchDay.value = MatchDayState(
+            match = match,
+            opponent = opponent,
+            isHome = snap.userIsHome,
+            opponentFormationName = SeasonEngine.tacticsFor(career, opponentId, match.matchday).formation.name,
+            userFormationName = career.tactics.formation.name,
+            mode = if (snap.mode == MatchModePersist.QUICK) MatchMode.QUICK else MatchMode.PLAY,
+            started = true,
+            simulating = false,
+            phase = phase,
+            minute = engine.clockMinute,
+            homeGoals = hg,
+            awayGoals = ag,
+            homeStats = hStats,
+            awayStats = aStats,
+            feed = feed.takeLast(80),
+            homeOnPitch = engine.activeInput(true).selection.startingXi.map { it.playerId },
+            awayOnPitch = engine.activeInput(false).selection.startingXi.map { it.playerId },
+            awaitingHalfTime = phase == MatchPhase.HALF_TIME,
+            awaitingExtraTime = engine.needsExtraTime,
+            substitutionsMade = engine.substitutionsMade(career.userClubId),
+            substitutionWindowsUsed = engine.windowsConsumed(career.userClubId),
+            homeDomination = domHome,
+            benchIds = _liveBench,
+            maxSubstitutions = snap.maxSubstitutions,
+            maxSubstitutionWindows = snap.maxSubstitutionWindows
+        )
+        return true
+    }
+
+    /**
+     * Attaches the live engine's snapshot to a career so a partially played match
+     * is written to disk with everything else. Returns the career unchanged when
+     * no match is active.
+     */
+    private fun snapshotInto(career: Career): Career {
+        val engine = _engine ?: return career
+        val matchDay = _matchDay.value ?: return career
+        val userIsHome = matchDay.match.homeClubId == career.userClubId
+        val mode = if (matchDay.mode == MatchMode.QUICK) MatchModePersist.QUICK else MatchModePersist.PLAY
+        val snap = engine.snapshot(
+            matchId = matchDay.match.id,
+            leagueId = matchDay.match.leagueId,
+            matchday = matchDay.match.matchday,
+            userIsHome = userIsHome,
+            mode = mode,
+            liveXi = _liveXi,
+            liveBench = _liveBench
+        ).copy(suspended = !matchDay.simulating)
+        return career.copy(inProgressMatch = snap)
     }
 
     /** Queues a substitution. Applied at the next break (half time or immediately). */
@@ -569,7 +687,7 @@ class GameViewModel(
         val engine = ProgressiveMatchEngine(
             home = homeInput,
             away = awayInput,
-            random = rngFor(base),
+            seedRandom = SerializableRandom(rngFor(base).nextLong()),
             homeAdvantage = true,
             determinism = SeasonEngine.determinismFor(base),
             rules = SeasonEngine.rulesFor(matchDay.match)
@@ -590,6 +708,10 @@ class GameViewModel(
             maxSubstitutions = SeasonEngine.rulesFor(matchDay.match).maxSubstitutions,
             maxSubstitutionWindows = SeasonEngine.rulesFor(matchDay.match).maxSubstitutionWindows
         )
+        // Clear any stale pending match and write the fresh snapshot immediately,
+        // so an app restart in the first minute still resumes this match.
+        _career.value = base.copy(inProgressMatch = null)
+        persistSnapshotIfAny()
         runEngineLoop()
     }
 
@@ -601,39 +723,50 @@ class GameViewModel(
         engineJob?.cancel()
         engineJob = viewModelScope.launch {
             val engine = _engine ?: return@launch
-            while (true) {
-                val mode = _matchDay.value?.mode ?: MatchMode.PLAY
-                val slice = if (mode == MatchMode.QUICK) 45 else 1
-                // Play Match: 90 minutes spread over ~9-10 real minutes at the
-                // normal animation speed; Quick Sim: two 45-minute chunks.
-                val delayMs = if (mode == MatchMode.QUICK) 1500L
-                else (animationMultiplier() * 2L).coerceAtLeast(60L)
+            try {
+                while (true) {
+                    // If the match-day screen was dismissed (and the snapshot saved),
+                    // stop advancing: an invisible match must never run on.
+                    val mode = _matchDay.value?.mode ?: return@launch
+                    val slice = if (mode == MatchMode.QUICK) 45 else 1
+                    // Play Match: 90 minutes spread over ~9-10 real minutes at the
+                    // normal animation speed; Quick Sim: two 45-minute chunks.
+                    val delayMs = if (mode == MatchMode.QUICK) 1500L
+                    else (animationMultiplier() * 2L).coerceAtLeast(60L)
 
-                val produced = engine.advance(slice)
-                publishEngineState(engine, produced)
-                maybeAiReact(engine)
-                when {
-                    engine.isHalfTime -> {
-                        val updated = _matchDay.value ?: return@launch
-                        _matchDay.value = updated.copy(
-                            simulating = false,
-                            awaitingHalfTime = true,
-                            phase = MatchPhase.HALF_TIME
-                        )
-                        playSound(SoundCue.WHISTLE)
-                        return@launch
+                    val produced = engine.advance(slice)
+                    publishEngineState(engine, produced)
+                    maybeAiReact(engine)
+                    when {
+                        engine.isHalfTime -> {
+                            val updated = _matchDay.value ?: return@launch
+                            _matchDay.value = updated.copy(
+                                simulating = false,
+                                awaitingHalfTime = true,
+                                phase = MatchPhase.HALF_TIME
+                            )
+                            playSound(SoundCue.WHISTLE)
+                            persistSnapshotIfAny()
+                            return@launch
+                        }
+                        engine.needsExtraTime -> {
+                            val updated = _matchDay.value ?: return@launch
+                            _matchDay.value = updated.copy(simulating = false, awaitingExtraTime = true)
+                            persistSnapshotIfAny()
+                            return@launch
+                        }
+                        engine.isFinished -> {
+                            completeMatch(engine)
+                            return@launch
+                        }
                     }
-                    engine.needsExtraTime -> {
-                        val updated = _matchDay.value ?: return@launch
-                        _matchDay.value = updated.copy(simulating = false, awaitingExtraTime = true)
-                        return@launch
-                    }
-                    engine.isFinished -> {
-                        completeMatch(engine)
-                        return@launch
-                    }
+                    delay(delayMs)
                 }
-                delay(delayMs)
+            } finally {
+                // Whatever happened — normal finish, cancellation, or an unexpected
+                // error — the busy flag must never be left set, otherwise the whole
+                // UI appears frozen and no button responds.
+                if (!(_matchDay.value?.isPlayed ?: false)) _isBusy.value = false
             }
         }
     }
@@ -760,6 +893,7 @@ class GameViewModel(
                 MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == career.userClubId)
             }).takeLast(80)
         )
+        persistSnapshotIfAny()
         runEngineLoop()
     }
 
@@ -777,6 +911,7 @@ class GameViewModel(
                 MatchFeedItem(it.displayMinute, it.type, feedText(it), it.clubId == (careerUserClubId() ?: -1L))
             }).takeLast(80)
         )
+        persistSnapshotIfAny()
         runEngineLoop()
     }
 
@@ -832,6 +967,7 @@ class GameViewModel(
             substitutionWindowsUsed = engine.windowsConsumed(career.userClubId)
         )
         playSound(SoundCue.CLICK)
+        persistSnapshotIfAny()
     }
 
     /** The user's XI currently on the pitch, for the live substitution screen. */
@@ -839,6 +975,17 @@ class GameViewModel(
 
     /** The bench still available, for the live substitution screen. */
     fun liveBench(): List<Long> = _liveBench
+
+    /**
+     * The tactics the live engine is actually using right now, which is the
+     * authoritative set for a paused match (the career copy is written in step,
+     * but the engine may hold a repaired selection the career does not yet).
+     */
+    fun liveTactics(): Tactics {
+        val engine = _engine ?: return _career.value?.tactics ?: Tactics.DEFAULT
+        val userIsHome = _matchDay.value?.let { it.match.homeClubId == _career.value?.userClubId } ?: true
+        return engine.activeInput(userIsHome).tactics
+    }
 
     /** Builds the user's current team input, optionally overriding their XI. */
     private fun buildUserInput(
@@ -909,39 +1056,52 @@ class GameViewModel(
             substitutionsMade = engine.substitutionsMade(career.userClubId),
             substitutionWindowsUsed = engine.windowsConsumed(career.userClubId)
         )
+        persistSnapshotIfAny()
     }
 
     /** Called when the engine reports the match is over. */
     private fun completeMatch(engine: ProgressiveMatchEngine) {
         val matchDay = _matchDay.value ?: return
         val career = _engineCareer ?: _career.value ?: return
+        // The live match is settled: clear the pending snapshot so a restart never
+        // replays a fixture that has already produced a result.
+        val careerForSettlement = career.copy(inProgressMatch = null)
         viewModelScope.launch {
             _isBusy.value = true
-            val outcome = withContext(Dispatchers.Default) {
-                val random = rngFor(career)
-                val result = engine.toResult(
-                    matchId = matchDay.match.id,
-                    leagueId = matchDay.match.leagueId,
-                    matchday = matchDay.match.matchday
-                )
-                // Settle the rest of the matchday card, then fold the result in.
-                var current = SeasonEngine.simulateOtherFixtures(career, random)
-                current = SeasonEngine.applyResult(current, matchDay.match, result, random, userMatch = true)
-                current to result
+            val outcome = runCatching {
+                withContext(Dispatchers.Default) {
+                    val random = rngFor(careerForSettlement)
+                    val result = engine.toResult(
+                        matchId = matchDay.match.id,
+                        leagueId = matchDay.match.leagueId,
+                        matchday = matchDay.match.matchday
+                    )
+                    // Settle the rest of the matchday card, then fold the result in.
+                    var current = SeasonEngine.simulateOtherFixtures(careerForSettlement, random)
+                    current = SeasonEngine.applyResult(current, matchDay.match, result, random, userMatch = true)
+                    current to result
+                }
             }
-            _career.value = outcome.first
+            val settled = outcome.getOrNull()
+            if (settled == null) {
+                _isBusy.value = false
+                _message.value = "The match could not be completed. Please try again."
+                return@launch
+            }
+            _career.value = settled.first.copy(inProgressMatch = null)
             _matchDay.value = matchDay.copy(
                 simulating = false,
                 phase = MatchPhase.FINISHED,
-                result = outcome.second,
+                result = settled.second,
                 feed = matchDay.feed + MatchFeedItem("FT", MatchEventType.FULL_TIME,
-                    "Full time: ${outcome.second.homeGoals} - ${outcome.second.awayGoals}",
+                    "Full time: ${settled.second.homeGoals} - ${settled.second.awayGoals}",
                     true)
             )
             _engine = null
             _engineCareer = null
             _isBusy.value = false
-            persist(outcome.first)
+            playSound(SoundCue.WHISTLE)
+            persist(settled.first.copy(inProgressMatch = null))
         }
     }
 
@@ -949,6 +1109,7 @@ class GameViewModel(
     fun pauseMatch() {
         engineJob?.cancel()
         _matchDay.value = _matchDay.value?.copy(simulating = false)
+        persistSnapshotIfAny()
     }
 
     /** Resumes a paused live match. */
@@ -960,8 +1121,30 @@ class GameViewModel(
         runEngineLoop()
     }
 
+    /**
+     * Leaves a live match without finishing it. Nothing is conceded: the engine
+     * state is written into the save, so opening the next match resumes at the
+     * same minute with the same score. This is what the system back button calls,
+     * so navigating away can never abandon a match in progress.
+     */
+    fun leaveMatch() {
+        engineJob?.cancel()
+        _matchDay.value = _matchDay.value?.copy(simulating = false)
+        persistSnapshotIfAny()
+        _matchDay.value = null
+    }
+
     /** True while a live match is in progress and can be paused or managed. */
     val hasLiveMatch: Boolean get() = _engine != null
+
+    /** Writes the current live engine state into the save if a match is active. */
+    private fun persistSnapshotIfAny() {
+        val career = _career.value ?: return
+        if (_engine == null || _matchDay.value?.isPlayed == true) return
+        val snapshotted = snapshotInto(career)
+        _career.value = snapshotted
+        persist(snapshotted)
+    }
 
     /**
      * Plays the prepared fixture instantly (legacy/test path). Simulates the whole
@@ -995,7 +1178,7 @@ class GameViewModel(
                 homeStats = outcome.second.homeStats, awayStats = outcome.second.awayStats
             )
             _isBusy.value = false
-            persist(outcome.first)
+            persist(outcome.first.copy(inProgressMatch = null))
             onComplete(outcome.second)
         }
     }
@@ -1035,41 +1218,47 @@ class GameViewModel(
         engineJob?.cancel()
         _engine = null
         _engineCareer = null
+        val base = career.copy(inProgressMatch = null)
         viewModelScope.launch {
             _isBusy.value = true
-            val updated = withContext(Dispatchers.Default) {
-                var current = career
-                val random = rngFor(current)
-                val matchday = current.matchdayIndex + 1
+            try {
+                val updated = withContext(Dispatchers.Default) {
+                    var current = base
+                    val random = rngFor(current)
+                    val matchday = current.matchdayIndex + 1
 
-                // Any of the user's fixtures this matchday that have not yet been
-                // played (typically a European tie) are resolved now.
-                val leftover = current.fixtures.filter {
-                    !it.isPlayed && it.involves(current.userClubId) && it.matchday == matchday
-                }
-                for (fixture in leftover) {
-                    val (next, _) = SeasonEngine.simulateFixture(current, fixture, random, userMatch = true)
-                    current = next
-                }
+                    // Any of the user's fixtures this matchday that have not yet been
+                    // played (typically a European tie) are resolved now.
+                    val leftover = current.fixtures.filter {
+                        !it.isPlayed && it.involves(current.userClubId) && it.matchday == matchday
+                    }
+                    for (fixture in leftover) {
+                        val (next, _) = SeasonEngine.simulateFixture(current, fixture, random, userMatch = true)
+                        current = next
+                    }
 
-                // Ensure every other league and the rest of the European card has
-                // been played for this matchday before the calendar advances.
-                current = SeasonEngine.simulateOtherFixtures(current, random)
-                current = SeasonEngine.advanceWeek(current, random)
-                current = FinanceEngine.applyFinancialPressure(current)
-                // Progress the Champions League bracket once its rounds complete.
-                var idc = current.idCounter
-                current = ChampionsLeagueEngine.progress(current, random) { ++idc }
-                current = current.copy(idCounter = idc)
-                if (current.matchdayIndex >= current.totalMatchdays()) {
-                    current = current.copy(phase = GamePhase.SEASON_ENDED)
+                    // Ensure every other league and the rest of the European card has
+                    // been played for this matchday before the calendar advances.
+                    current = SeasonEngine.simulateOtherFixtures(current, random)
+                    current = SeasonEngine.advanceWeek(current, random)
+                    current = FinanceEngine.applyFinancialPressure(current)
+                    // Progress the Champions League bracket once its rounds complete.
+                    var idc = current.idCounter
+                    current = ChampionsLeagueEngine.progress(current, random) { ++idc }
+                    current = current.copy(idCounter = idc)
+                    if (current.matchdayIndex >= current.totalMatchdays()) {
+                        current = current.copy(phase = GamePhase.SEASON_ENDED)
+                    }
+                    current
                 }
-                current
+                _career.value = updated
+                _matchDay.value = null
+                persist(updated)
+            } catch (t: Throwable) {
+                _message.value = "The week could not be advanced. Please try again."
+            } finally {
+                _isBusy.value = false
             }
-            _career.value = updated
-            _matchDay.value = null
-            _isBusy.value = false
-            persist(updated)
         }
     }
 
