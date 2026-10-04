@@ -111,5 +111,11 @@ leagues the same size, or give each league its own matchday count.
   `vX.Y.Z-test`. Release signing uses `keystore.properties` (never committed); when
   absent, release falls back to the debug keystore so `assembleRelease` still
   produces an installable artifact.
-- The `GITHUB_TOKEN` in this environment has been observed to be invalid/expired,
-  which blocks `git push` and PR creation. Report it rather than retrying.
+- `GITHUB_TOKEN` is valid in this environment, but plain `git push` has no credential
+  helper and will block on an interactive `Username for 'https://github.com':` prompt.
+  Push with the token in the URL instead, which does not prompt:
+  `git -c credential.helper= push "https://x-access-token:${GITHUB_TOKEN}@github.com/whoCares218/FM-27.git" HEAD:<branch>`.
+  Do not leave a credential-bearing remote configured; the token-in-URL form is per-command.
+- There are no GitHub Actions workflows in this repo, so PRs carry no CI checks to wait on.
+- `origin/fix/match-lifecycle-persistence` and `origin/main` are both fast-forward bases;
+  push new work as a normal (non-force) fast-forward.
