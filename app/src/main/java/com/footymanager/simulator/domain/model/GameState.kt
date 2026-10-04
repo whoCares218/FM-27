@@ -135,7 +135,8 @@ data class NewsItem(
 @Serializable
 enum class LedgerCategory {
     TRANSFER_IN, TRANSFER_OUT, WAGES, MATCHDAY, PRIZE_MONEY, BOARD_INJECTION, BOARD_ADJUSTMENT,
-    SPONSORSHIP, STADIUM, COMPETITION_REVENUE, OTHER;
+    SPONSORSHIP, STADIUM, COMPETITION_REVENUE, OTHER,
+    HOSPITALITY, CONCESSIONS, MERCHANDISE, MATCHDAY_EXPENSES, BROADCASTING, COMMERCIAL;
 
     val label: String
         get() = when (this) {
@@ -150,7 +151,17 @@ enum class LedgerCategory {
             STADIUM -> "Stadium"
             COMPETITION_REVENUE -> "Competition"
             OTHER -> "Other"
+            HOSPITALITY -> "Hospitality"
+            CONCESSIONS -> "Concessions"
+            MERCHANDISE -> "Merchandise"
+            MATCHDAY_EXPENSES -> "Matchday costs"
+            BROADCASTING -> "Broadcasting"
+            COMMERCIAL -> "Commercial"
         }
+
+    /** True for categories that describe money earned on a matchday. */
+    val isMatchdayRevenue: Boolean
+        get() = this == MATCHDAY || this == HOSPITALITY || this == CONCESSIONS || this == MERCHANDISE
 }
 
 @Serializable

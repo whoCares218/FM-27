@@ -12,6 +12,7 @@ import com.footymanager.simulator.domain.data.SaveRepository
 import com.footymanager.simulator.domain.data.SettingsRepository
 import com.footymanager.simulator.domain.data.SettingsStore
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
+import com.footymanager.simulator.domain.engine.AiManager
 import com.footymanager.simulator.domain.engine.FinanceEngine
 import com.footymanager.simulator.domain.engine.MatchPhase
 import com.footymanager.simulator.domain.engine.MatchRules
@@ -25,6 +26,7 @@ import com.footymanager.simulator.domain.engine.SponsorshipEngine
 import com.footymanager.simulator.domain.engine.StadiumEngine
 import com.footymanager.simulator.domain.engine.TransferEngine
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.AttendanceEstimate
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.Difficulty
@@ -38,13 +40,17 @@ import com.footymanager.simulator.domain.model.MatchResult
 import com.footymanager.simulator.domain.model.MatchModePersist
 import com.footymanager.simulator.domain.model.MatchPhasePersist
 import com.footymanager.simulator.domain.model.InProgressMatchState
+import com.footymanager.simulator.domain.model.MatchdayFinance
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
+import com.footymanager.simulator.domain.model.PositionChange
+import com.footymanager.simulator.domain.model.SaleNegotiation
 import com.footymanager.simulator.domain.model.SponsorOffer
 import com.footymanager.simulator.domain.model.Tactics
 import com.footymanager.simulator.domain.model.TeamMatchStats
 import com.footymanager.simulator.domain.model.TeamSelection
 import com.footymanager.simulator.domain.model.TrainingFocus
+import com.footymanager.simulator.domain.model.TransferListing
 import com.footymanager.simulator.domain.model.TransferOffer
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.sound.SoundManager
@@ -124,10 +130,20 @@ data class MatchDayState(
     val benchIds: List<Long> = emptyList(),
     /** Competition limits, shown on the substitution screen. */
     val maxSubstitutions: Int = 5,
-    val maxSubstitutionWindows: Int = 3
+    val maxSubstitutionWindows: Int = 3,
+    /** Forward gate estimate for a home fixture, shown before kick-off. */
+    val attendanceEstimate: AttendanceEstimate? = null,
+    /** The user's league position before this fixture, for the movement animation. */
+    val positionBefore: Int = 0,
+    /** The user's league position after this fixture, for the movement animation. */
+    val positionAfter: Int = 0,
+    /** The full financial report for this fixture once it has been settled. */
+    val matchdayFinance: MatchdayFinance? = null
 ) {
     val isPlayed: Boolean get() = result != null
     val isFinished: Boolean get() = result != null
+
+    val positionChange: PositionChange get() = PositionChange(positionBefore, positionAfter)
 
     /** Goals for the user's club regardless of venue. */
     val userGoals: Int get() = if (isHome) homeGoals else awayGoals
@@ -598,13 +614,29 @@ class GameViewModel(
         val opponentId = match.opponentOf(career.userClubId)
         val opponent = career.clubOrThrow(opponentId)
         val opponentTactics = SeasonEngine.tacticsFor(career, opponentId, match.matchday)
+        val isHome = match.isHomeFor(career.userClubId)
         _matchDay.value = MatchDayState(
             match = match,
             opponent = opponent,
-            isHome = match.isHomeFor(career.userClubId),
+            isHome = isHome,
             opponentFormationName = opponentTactics.formation.name,
             userFormationName = career.tactics.formation.name,
-            pendingOtherFixtures = candidates.filter { it.id != match.id }
+            pendingOtherFixtures = candidates.filter { it.id != match.id },
+            attendanceEstimate = if (isHome) {
+                val ppg = AiManager.recentPointsPerGame(
+                    career.fixtures.filter { it.isPlayed && it.involves(career.userClubId) },
+                    career.userClubId
+                )
+                StadiumEngine.estimate(
+                    stadium = career.stadium,
+                    reputation = career.userClub.reputation,
+                    opponentReputation = opponent.reputation,
+                    recentPointsPerGame = ppg,
+                    fanSatisfaction = career.fanSatisfaction,
+                    isRival = career.userClub.rivalClubId == opponent.id
+                )
+            } else null,
+            positionBefore = career.userLeaguePosition
         )
         return true
     }
@@ -1153,6 +1185,8 @@ class GameViewModel(
                 simulating = false,
                 phase = MatchPhase.FINISHED,
                 result = settled.second,
+                positionAfter = settled.first.userLeaguePosition,
+                matchdayFinance = settled.first.lastMatchdayFinance,
                 feed = matchDay.feed + MatchFeedItem("FT", MatchEventType.FULL_TIME,
                     "Full time: ${settled.second.homeGoals} - ${settled.second.awayGoals}",
                     true)
@@ -1273,7 +1307,9 @@ class GameViewModel(
             _matchDay.value = matchDay.copy(
                 started = true, phase = MatchPhase.FINISHED, result = outcome.second,
                 homeGoals = outcome.second.homeGoals, awayGoals = outcome.second.awayGoals,
-                homeStats = outcome.second.homeStats, awayStats = outcome.second.awayStats
+                homeStats = outcome.second.homeStats, awayStats = outcome.second.awayStats,
+                positionAfter = outcome.first.userLeaguePosition,
+                matchdayFinance = outcome.first.lastMatchdayFinance
             )
             _isBusy.value = false
             persist(outcome.first.copy(inProgressMatch = null))
@@ -1515,6 +1551,73 @@ class GameViewModel(
                 it.status == OfferStatus.REJECTED ||
                 it.status == OfferStatus.COUNTERED
         } ?: emptyList()
+
+    // -------------------------------------------------------------- selling
+
+    /** The live sale negotiation, if one is open. */
+    fun pendingSale(): SaleNegotiation? = _career.value?.pendingSale
+
+    /** Every player the manager has listed for sale, with their asking price. */
+    fun transferListings(): List<TransferListing> = _career.value?.transferListings.orEmpty()
+
+    /** Lists a player for sale and generates the interested clubs immediately. */
+    fun listPlayerForSale(playerId: Long, askingPrice: Long) {
+        playSound(SoundCue.CLICK)
+        val career = _career.value ?: return
+        updateCareer { c -> TransferEngine.listPlayer(c, playerId, askingPrice, rngFor(c)) }
+        when (_career.value?.pendingSale?.bids?.size) {
+            0 -> playSound(SoundCue.FAILURE)
+            else -> playSound(SoundCue.SUCCESS)
+        }
+    }
+
+    /** Changes the asking price for a listed player and refreshes the interest. */
+    fun setAskingPrice(playerId: Long, askingPrice: Long) {
+        val career = _career.value ?: return
+        updateCareer { c -> TransferEngine.updateAskingPrice(c, playerId, askingPrice, rngFor(c)) }
+    }
+
+    /** Counts how many clubs would be interested at a given asking price. */
+    fun interestedClubCount(player: Player, askingPrice: Long): Int {
+        val career = _career.value ?: return 0
+        return TransferEngine.interestedClubCount(career, player, askingPrice)
+    }
+
+    /** Counters one club's bid; every club responds immediately. */
+    fun counterSaleBid(clubId: Long, amount: Long) {
+        playSound(SoundCue.CLICK)
+        val career = _career.value ?: return
+        updateCareer { c -> TransferEngine.counterSaleBid(c, clubId, amount, rngFor(c)) }
+        when (_career.value?.pendingSale?.acceptedBid) {
+            null -> Unit
+            else -> playSound(SoundCue.SUCCESS)
+        }
+    }
+
+    /** Accepts a club's bid and completes the sale at once. */
+    fun acceptSaleBid(clubId: Long) {
+        playSound(SoundCue.SUCCESS)
+        updateCareer { c -> TransferEngine.acceptSaleBid(c, clubId) }
+    }
+
+    /** Rejects one club's bid. */
+    fun rejectSaleBid(clubId: Long) {
+        val career = _career.value ?: return
+        updateCareer { c -> TransferEngine.rejectSaleBid(c, clubId) }
+    }
+
+    /** Abandons the sale and clears the listing. */
+    fun cancelSale() {
+        val career = _career.value ?: return
+        updateCareer { c -> TransferEngine.cancelSale(c) }
+    }
+
+    // -------------------------------------------------------------- finances
+
+    fun financeSummary(): FinanceEngine.FinanceSummary? {
+        val career = _career.value ?: return null
+        return FinanceEngine.summarise(career)
+    }
 
     // --------------------------------------------------------------- stadium
 

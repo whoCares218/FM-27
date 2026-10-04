@@ -46,7 +46,7 @@ fun StadiumIllustration(
     val pitchColor = blend(Color(0xFF1E7A3C), palette.plate, 0.35f)
     val lineColor = Color.White.copy(alpha = 0.75f)
     val levelFraction by animateFloatAsState(
-        targetValue = (stadium.level - 1) / (Stadium.MAX_CAPACITY.size - 1f).coerceAtLeast(1f),
+        targetValue = (stadium.level - 1) / (Stadium.MAX_LEVEL - 1f).coerceAtLeast(1f),
         animationSpec = tween(durationMillis = 700),
         label = "stadiumLevel"
     )

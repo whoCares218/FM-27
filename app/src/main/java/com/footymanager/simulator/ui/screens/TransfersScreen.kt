@@ -65,11 +65,15 @@ import com.footymanager.simulator.ui.components.StatCell
 import com.footymanager.simulator.ui.theme.StatColors
 
 /**
- * Transfer market with search, filters, bidding and outgoing sales.
+ * The transfer hub, split into two complete management systems.
  *
- * Negotiation is deliberately transparent: the asking price and wage demand are
- * shown, so the player understands why a bid succeeded or failed.
+ * BUY is the market: search, filter, inspect, negotiate and sign players.
+ * SELL is the manager's own auction: list a player, set an asking price, watch
+ * clubs bid, and negotiate until a deal is agreed. Keeping the two apart stops
+ * either from feeling like an afterthought.
  */
+enum class TransferTab(val label: String) { BUY("Buy"), SELL("Sell") }
+
 @Composable
 fun TransfersScreen(
     career: Career,
@@ -81,9 +85,88 @@ fun TransfersScreen(
     onAcceptCounter: (Long) -> Unit,
     onSubmitPlayerTerms: (Long, ContractTerms) -> Unit,
     onCancelOffer: (Long) -> Unit,
-    onInterestedBuyers: (Long) -> List<Pair<com.footymanager.simulator.domain.model.Club, Long>>,
-    onSell: (Long, Long, Long) -> Unit,
+    onListPlayer: (Long, Long) -> Unit,
+    onSetAskingPrice: (Long, Long) -> Unit,
+    onInterestedCount: (Player, Long) -> Int,
+    onCounterSaleBid: (Long, Long) -> Unit,
+    onAcceptSaleBid: (Long) -> Unit,
+    onRejectSaleBid: (Long) -> Unit,
+    onCancelSale: () -> Unit,
     onRelease: (Long) -> Unit
+) {
+    var tab by remember { mutableStateOf(TransferTab.BUY) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // ---- BUY | SELL selector ----
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            TransferTab.entries.forEach { option ->
+                val selected = tab == option
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .clickable { tab = option }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = option.label.uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        when (tab) {
+            TransferTab.BUY -> BuySection(
+                career = career,
+                onSearch = onSearch,
+                onAskingPrice = onAskingPrice,
+                onExpectedWage = onExpectedWage,
+                onRequiredPackage = onRequiredPackage,
+                onMakeOfferPackage = onMakeOfferPackage,
+                onAcceptCounter = onAcceptCounter,
+                onSubmitPlayerTerms = onSubmitPlayerTerms,
+                onCancelOffer = onCancelOffer
+            )
+            TransferTab.SELL -> SellSection(
+                career = career,
+                onListPlayer = onListPlayer,
+                onSetAskingPrice = onSetAskingPrice,
+                onInterestedCount = onInterestedCount,
+                onCounterSaleBid = onCounterSaleBid,
+                onAcceptSaleBid = onAcceptSaleBid,
+                onRejectSaleBid = onRejectSaleBid,
+                onCancelSale = onCancelSale,
+                onRelease = onRelease
+            )
+        }
+    }
+}
+
+@Composable
+private fun BuySection(
+    career: Career,
+    onSearch: (String, Position?) -> List<Player>,
+    onAskingPrice: (Player) -> Long,
+    onExpectedWage: (Player) -> Long,
+    onRequiredPackage: (Player) -> TransferPackage,
+    onMakeOfferPackage: (Long, TransferPackage, ContractTerms) -> Unit,
+    onAcceptCounter: (Long) -> Unit,
+    onSubmitPlayerTerms: (Long, ContractTerms) -> Unit,
+    onCancelOffer: (Long) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var positionFilter by remember { mutableStateOf<Position?>(null) }
@@ -91,7 +174,6 @@ fun TransfersScreen(
     var affordableOnly by remember { mutableStateOf(false) }
     var shortlist by remember { mutableStateOf(emptySet<Long>()) }
     var negotiatingPlayerId by remember { mutableStateOf<Long?>(null) }
-    var sellingPlayerId by remember { mutableStateOf<Long?>(null) }
 
     val results = remember(query, positionFilter, career.players, career.clubs) {
         onSearch(query, positionFilter)
@@ -122,10 +204,9 @@ fun TransfersScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // ---- Budget summary ----
         item {
             FmCard {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -145,7 +226,6 @@ fun TransfersScreen(
             }
         }
 
-        // ---- Active negotiations ----
         if (activeOffers.isNotEmpty()) {
             item { SectionHeader("Negotiations") }
             items(activeOffers, key = { "offer-${it.id}" }) { offer ->
@@ -159,7 +239,6 @@ fun TransfersScreen(
             }
         }
 
-        // ---- Search ----
         item {
             FmCard {
                 SectionHeader("Search players")
@@ -217,7 +296,6 @@ fun TransfersScreen(
             }
         }
 
-        // ---- Shortlist ----
         if (shortlisted.isNotEmpty()) {
             item { SectionHeader("Shortlist (${shortlisted.size})") }
             items(shortlisted, key = { "short-${it.id}" }) { player ->
@@ -237,10 +315,7 @@ fun TransfersScreen(
             }
         }
 
-        // ---- Results ----
-        item {
-            SectionHeader("${visible.size} players available")
-        }
+        item { SectionHeader("${visible.size} players available") }
 
         if (visible.isEmpty()) {
             item {
@@ -267,21 +342,8 @@ fun TransfersScreen(
                 onClick = { negotiatingPlayerId = player.id }
             )
         }
-
-        // ---- Sell your own players ----
-        item {
-            Spacer(Modifier.height(8.dp))
-            SectionHeader("Sell from your squad")
-        }
-        items(career.userSquad.sortedByDescending { it.value }, key = { "sell-${it.id}" }) { player ->
-            OwnPlayerRow(
-                player = player,
-                onClick = { sellingPlayerId = player.id }
-            )
-        }
     }
 
-    // ---- Negotiation dialog ----
     negotiatingPlayerId?.let { playerId ->
         val player = career.player(playerId)
         if (player != null) {
@@ -300,17 +362,83 @@ fun TransfersScreen(
             negotiatingPlayerId = null
         }
     }
+}
 
-    // ---- Sell dialog ----
+@Composable
+private fun SellSection(
+    career: Career,
+    onListPlayer: (Long, Long) -> Unit,
+    onSetAskingPrice: (Long, Long) -> Unit,
+    onInterestedCount: (Player, Long) -> Int,
+    onCounterSaleBid: (Long, Long) -> Unit,
+    onAcceptSaleBid: (Long) -> Unit,
+    onRejectSaleBid: (Long) -> Unit,
+    onCancelSale: () -> Unit,
+    onRelease: (Long) -> Unit
+) {
+    var sellingPlayerId by remember { mutableStateOf<Long?>(null) }
+    val sale = career.pendingSale
+    val windowOpen = career.transferWindow.isOpen(career.matchdayIndex)
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            FmCard {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell("Squad value", Fmt.money(career.userSquad.sumOf { it.value }))
+                    StatCell("Sold this season", Fmt.money(career.transferIncomeThisSeason), valueColor = StatColors.elite)
+                    StatCell("Listed", "${career.transferListings.size}")
+                }
+                Spacer(Modifier.height(8.dp))
+                if (!windowOpen) {
+                    InfoPill(text = "Transfer window closed — sales reopen after matchday 3", color = StatColors.poor)
+                } else {
+                    InfoPill(text = "Window open", color = StatColors.elite)
+                }
+            }
+        }
+
+        if (sale != null) {
+            item { SectionHeader("Live negotiation: ${sale.playerName}") }
+            item {
+                SaleNegotiationCard(
+                    career = career,
+                    onCounter = { clubId, amount -> onCounterSaleBid(clubId, amount) },
+                    onAccept = { clubId -> onAcceptSaleBid(clubId) },
+                    onReject = { clubId -> onRejectSaleBid(clubId) },
+                    onCancel = onCancelSale
+                )
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(4.dp))
+            SectionHeader("Your squad")
+        }
+        items(career.userSquad.sortedByDescending { it.value }, key = { "sell-${it.id}" }) { player ->
+            val listed = career.transferListings.any { it.playerId == player.id }
+            SellSquadRow(
+                player = player,
+                listed = listed,
+                onClick = { sellingPlayerId = player.id }
+            )
+        }
+    }
+
     sellingPlayerId?.let { playerId ->
         val player = career.player(playerId)
         if (player != null) {
             SellPlayerDialog(
                 player = player,
-                buyers = onInterestedBuyers(playerId),
+                askingPrice = career.transferListings.firstOrNull { it.playerId == playerId }?.askingPrice
+                    ?: player.value,
+                interestedCount = onInterestedCount(player, player.value),
                 onDismiss = { sellingPlayerId = null },
-                onSell = { fee, buyerId ->
-                    onSell(playerId, fee, buyerId)
+                onList = { asking ->
+                    onListPlayer(playerId, asking)
                     sellingPlayerId = null
                 },
                 onRelease = {
@@ -404,16 +532,8 @@ private fun MarketPlayerRow(
     }
 }
 
-/** How the transfer market results are ordered. */
-enum class MarketSort(val label: String) {
-    RATING("Rating"),
-    POTENTIAL("Potential"),
-    VALUE("Value"),
-    AGE("Age")
-}
-
 @Composable
-private fun OwnPlayerRow(player: Player, onClick: () -> Unit) {
+private fun SellSquadRow(player: Player, listed: Boolean, onClick: () -> Unit) {
     FmCard(onClick = onClick, padding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             RatingBadge(player.overall, size = 36.dp)
@@ -436,14 +556,211 @@ private fun OwnPlayerRow(player: Player, onClick: () -> Unit) {
                     )
                 }
             }
-            Text(
-                text = Fmt.money(player.value),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = Fmt.money(player.value),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (listed) {
+                    Text(
+                        text = "LISTED",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StatColors.average,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Text(
+                        text = "List for sale",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
+
+/**
+ * The live multi-club sale negotiation: every interested club's bid, with the
+ * ability to counter, accept or reject each one. All clubs answer immediately.
+ */
+@Composable
+private fun SaleNegotiationCard(
+    career: Career,
+    onCounter: (Long, Long) -> Unit,
+    onAccept: (Long) -> Unit,
+    onReject: (Long) -> Unit,
+    onCancel: () -> Unit
+) {
+    val sale = career.pendingSale ?: return
+    var counteringClubId by remember(sale.id) { mutableStateOf<Long?>(null) }
+
+    FmCard(accent = MaterialTheme.colorScheme.primary) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            StatCell("Market value", Fmt.money(sale.marketValue))
+            StatCell("Asking price", Fmt.money(sale.askingPrice))
+            StatCell("Clubs bidding", "${sale.interestedCount}")
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = sale.message,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+
+        if (sale.bids.isEmpty()) {
+            Text(
+                text = "No club is willing to meet your price. Lower the asking price to attract buyers.",
+                style = MaterialTheme.typography.bodySmall,
+                color = StatColors.bad
+            )
+        } else {
+            sale.bids.forEach { bid ->
+                val club = career.club(bid.clubId)
+                val accent = when (bid.status) {
+                    com.footymanager.simulator.domain.model.BidStatus.ACCEPTED -> StatColors.elite
+                    com.footymanager.simulator.domain.model.BidStatus.WITHDRAWN,
+                    com.footymanager.simulator.domain.model.BidStatus.REJECTED -> StatColors.bad
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (club != null) {
+                            ClubCrest(club = club, size = 26.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = bid.clubName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = accent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = bid.message,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Text(
+                            text = Fmt.money(bid.amount),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = accent
+                        )
+                    }
+                    if (bid.isLive) {
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FmSecondaryButton(
+                                text = "Accept",
+                                onClick = { onAccept(bid.clubId) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FmSecondaryButton(
+                                text = "Counter",
+                                onClick = {
+                                    counteringClubId =
+                                        if (counteringClubId == bid.clubId) null else bid.clubId
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FmSecondaryButton(
+                                text = "Reject",
+                                onClick = { onReject(bid.clubId) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    if (counteringClubId == bid.clubId) {
+                        Spacer(Modifier.height(6.dp))
+                        CounterBidEditor(
+                            playerName = sale.playerName,
+                            marketValue = sale.marketValue,
+                            currentBid = bid.amount,
+                            askingPrice = sale.askingPrice,
+                            onConfirm = { amount ->
+                                onCounter(bid.clubId, amount)
+                                counteringClubId = null
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onCancel) { Text("Cancel sale") }
+    }
+}
+
+@Composable
+private fun CounterBidEditor(
+    playerName: String,
+    marketValue: Long,
+    currentBid: Long,
+    askingPrice: Long,
+    onConfirm: (Long) -> Unit
+) {
+    val low = minOf(currentBid, marketValue)
+    val high = maxOf(askingPrice, (marketValue * 1.5).toLong())
+    var amount by remember(currentBid) {
+        mutableFloatStateOf((currentBid * 1.05).toFloat().coerceIn(low.toFloat(), high.toFloat()))
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraSmall)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(10.dp)
+    ) {
+        Text(
+            text = "Counter ${currentBid.let { Fmt.money(it) }} with",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = Fmt.money(amount.toLong()),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.width(10.dp))
+            Slider(
+                value = amount,
+                onValueChange = { amount = it },
+                valueRange = low.toFloat()..high.toFloat(),
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        FmPrimaryButton(
+            text = "Send counter",
+            onClick = { onConfirm(amount.toLong()) }
+        )
+    }
+}
+
+/** How the transfer market results are ordered. */
+enum class MarketSort(val label: String) {
+    RATING("Rating"),
+    POTENTIAL("Potential"),
+    VALUE("Value"),
+    AGE("Age")
+}
+
 
 @Composable
 private fun OfferCard(
@@ -837,80 +1154,82 @@ private fun NegotiationDialog(
     )
 }
 
-/** Selling a player: pick from clubs that have registered interest. */
+/** Listing a player for sale: set an asking price and see the likely interest. */
 @Composable
 private fun SellPlayerDialog(
     player: Player,
-    buyers: List<Pair<com.footymanager.simulator.domain.model.Club, Long>>,
+    askingPrice: Long,
+    interestedCount: Int,
     onDismiss: () -> Unit,
-    onSell: (fee: Long, buyerClubId: Long) -> Unit,
+    onList: (asking: Long) -> Unit,
     onRelease: () -> Unit
 ) {
+    val value = player.value
+    var asking by remember(player.id) {
+        mutableFloatStateOf(askingPrice.coerceAtLeast(value / 4).toFloat())
+    }
+    val ratio = if (value > 0) asking / value.toDouble() else 1.0
+    val demandHint = when {
+        ratio <= 0.95 -> "Bargain price — expect strong interest."
+        ratio <= 1.10 -> "Around market value — normal interest."
+        ratio <= 1.30 -> "Above market value — fewer clubs will bid."
+        else -> "Well above market value — most clubs will walk away."
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
                 Text("Sell ${player.name}")
                 Text(
-                    text = "Value ${Fmt.money(player.value)} • ${Fmt.wage(player.wagePerWeek)}",
+                    text = "Market value ${Fmt.money(value)} • ${Fmt.wage(player.wagePerWeek)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
         text = {
-            LazyColumn(
-                modifier = Modifier.height(320.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (buyers.isEmpty()) {
-                    item {
-                        Text(
-                            text = "No clubs have registered an interest in this player right now. " +
-                                "Try again later in the window, or release him.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                items(buyers, key = { it.first.id }) { (club, fee) ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(MaterialTheme.shapes.extraSmall)
-                            .background(MaterialTheme.colorScheme.surfaceContainer)
-                            .clickable { onSell(fee, club.id) }
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ClubCrest(club = club, size = 28.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = club.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "Reputation ${club.reputation}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            text = Fmt.money(fee),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
+            Column {
+                Text(
+                    text = "Set your asking price. Clubs bid immediately — you can then " +
+                        "negotiate with each of them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Asking price ${Fmt.money(asking.toLong())}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+                Slider(
+                    value = asking,
+                    onValueChange = { asking = it },
+                    valueRange = (value / 4).toFloat()..(value * 2).toFloat(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = demandHint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                InfoPill(
+                    text = "Estimated interest: $interestedCount club(s) at market value",
+                    color = if (interestedCount > 0) StatColors.elite else StatColors.bad
+                )
             }
         },
         confirmButton = {
-            TextButton(onClick = onRelease) { Text("Release player") }
+            TextButton(onClick = { onList(asking.toLong()) }) { Text("List for sale") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            Row {
+                TextButton(onClick = onRelease) { Text("Release") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
     )
 }
+

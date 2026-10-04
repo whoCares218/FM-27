@@ -409,8 +409,13 @@ private fun AppNavHost(
                     onAcceptCounter = { viewModel.acceptCounter(it) },
                     onSubmitPlayerTerms = { offerId, terms -> viewModel.submitPlayerTerms(offerId, terms) },
                     onCancelOffer = { viewModel.cancelOffer(it) },
-                    onInterestedBuyers = { viewModel.interestedBuyers(it) },
-                    onSell = { playerId, fee, buyerId -> viewModel.sellPlayer(playerId, fee, buyerId) },
+                    onListPlayer = { playerId, asking -> viewModel.listPlayerForSale(playerId, asking) },
+                    onSetAskingPrice = { playerId, asking -> viewModel.setAskingPrice(playerId, asking) },
+                    onInterestedCount = { player, asking -> viewModel.interestedClubCount(player, asking) },
+                    onCounterSaleBid = { clubId, amount -> viewModel.counterSaleBid(clubId, amount) },
+                    onAcceptSaleBid = { clubId -> viewModel.acceptSaleBid(clubId) },
+                    onRejectSaleBid = { clubId -> viewModel.rejectSaleBid(clubId) },
+                    onCancelSale = { viewModel.cancelSale() },
                     onRelease = { viewModel.releasePlayer(it) }
                 )
             }

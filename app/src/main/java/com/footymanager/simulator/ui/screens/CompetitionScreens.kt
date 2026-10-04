@@ -406,8 +406,9 @@ private fun statusColor(status: UclStatus) = when (status) {
 }
 
 /**
- * Stadium management: capacity, ticket pricing, attendance history and paid
- * expansion. Pricing is a real trade-off, and the screen says so.
+ * Stadium management: level, capacity, attendance, ticket pricing and paid
+ * expansion. Pricing is a real trade-off and the screen shows the projected gate
+ * so the manager can judge it.
  */
 @Composable
 fun StadiumScreen(
@@ -419,12 +420,31 @@ fun StadiumScreen(
     val band = stadium.priceBand(career.userClub.reputation)
     var price by remember(stadium.ticketPrice) { mutableFloatStateOf(stadium.ticketPrice.toFloat()) }
 
+    // A live estimate for a typical home match at the chosen price, so the
+    // manager can see the demand curve move as they drag the slider.
+    val ppg = com.footymanager.simulator.domain.engine.AiManager.recentPointsPerGame(
+        career.fixtures.filter { it.isPlayed && it.involves(career.userClubId) },
+        career.userClubId
+    )
+    val previewEstimate = remember(price, stadium.capacity) {
+        com.footymanager.simulator.domain.engine.StadiumEngine.estimate(
+            stadium = stadium.copy(ticketPrice = price.toInt()),
+            reputation = career.userClub.reputation,
+            opponentReputation = career.userClub.reputation,
+            recentPointsPerGame = ppg,
+            fanSatisfaction = career.fanSatisfaction
+        )
+    }
+    val occupancy = if (stadium.capacity > 0) {
+        stadium.averageAttendance * 100.0 / stadium.capacity
+    } else 0.0
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { ScreenTitle(stadium.name, "Capacity ${"%,d".format(stadium.capacity)}") }
+        item { ScreenTitle(stadium.name, "Level ${stadium.level} of ${Stadium.MAX_LEVEL}") }
 
         item {
             FmCard {
@@ -438,15 +458,24 @@ fun StadiumScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    StatCell("Level", "${stadium.level}/${Stadium.MAX_CAPACITY.size}")
-                    StatCell("Last crowd", "${"%,d".format(stadium.lastAttendance)}")
-                    StatCell("Average", "${"%,d".format(stadium.averageAttendance)}")
+                    StatCell("Level", "${stadium.level}/${Stadium.MAX_LEVEL}")
+                    StatCell("Capacity", "${"%,d".format(stadium.capacity)}")
+                    StatCell("Avg crowd", "${"%,d".format(stadium.averageAttendance)}")
                 }
                 Spacer(Modifier.height(10.dp))
-                StatCell(
-                    "Matchday income to date",
-                    Fmt.money(stadium.totalMatchdayIncome),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    StatCell("Occupancy", "%.1f%%".format(occupancy))
+                    StatCell("Ticket price", "£${stadium.ticketPrice}")
+                    StatCell("Matchday income", Fmt.money(stadium.totalMatchdayIncome))
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Capacity ceiling for this club: ${"%,d".format(stadium.maxCapacity)} seats.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -476,9 +505,18 @@ fun StadiumScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    StatCell("Expected crowd", "${"%,d".format(previewEstimate.expectedAttendance)}")
+                    StatCell("Occupancy", "%.0f%%".format(previewEstimate.occupancyPercent))
+                    StatCell("Gate estimate", Fmt.money(previewEstimate.estimatedTicketRevenue))
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = priceHint(price.toInt(), band),
+                    text = priceHint(price.toInt(), band, previewEstimate.expectedAttendance, stadium.capacity),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -502,14 +540,17 @@ fun StadiumScreen(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 } else if (stadium.canExpand) {
-                    StatCell(
-                        "Next capacity",
-                        "${"%,d".format(stadium.nextCapacity)} seats",
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        StatCell("Next level", "${stadium.level + 1}")
+                        StatCell("Projected capacity", "${"%,d".format(stadium.nextCapacity)}")
+                        StatCell("Upgrade time", "${Stadium.EXPANSION_WEEKS} wks")
+                    }
                     Spacer(Modifier.height(8.dp))
                     StatCell(
-                        "Cost",
+                        "Upgrade cost",
                         Fmt.money(stadium.expansionCost),
                         valueColor = if (career.userClub.balance >= stadium.expansionCost)
                             StatColors.good else StatColors.bad,
@@ -524,7 +565,7 @@ fun StadiumScreen(
                     EmptyState(
                         icon = Icons.Outlined.EmojiEvents,
                         title = "Maximum capacity reached",
-                        body = "The stadium is as large as it can be."
+                        body = "The stadium is as large as this club can sustain."
                     )
                 }
             }
@@ -532,10 +573,15 @@ fun StadiumScreen(
     }
 }
 
-private fun priceHint(price: Int, band: IntRange): String = when {
-    price < band.first -> "Bargain pricing: big crowds, but you are leaving money on the table."
-    price > band.last -> "Premium pricing: fewer fans and a dent in the atmosphere."
-    else -> "Sensible pricing for this club's support."
+private fun priceHint(price: Int, band: IntRange, expected: Int, capacity: Int): String {
+    val occupancy = if (capacity > 0) expected * 100.0 / capacity else 0.0
+    return when {
+        price < band.first -> "Bargain pricing: ${"%.0f".format(occupancy)}% full, " +
+            "but you are leaving money on the table."
+        price > band.last -> "Premium pricing: only ${"%.0f".format(occupancy)}% full, " +
+            "and the atmosphere suffers."
+        else -> "Sensible pricing for this club's support."
+    }
 }
 
 /**

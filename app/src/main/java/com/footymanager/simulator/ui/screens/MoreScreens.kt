@@ -177,11 +177,88 @@ fun FinancesScreen(career: Career) {
                     color = if (summary.balance >= 0) MaterialTheme.colorScheme.primary
                     else StatColors.bad
                 )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Economic tier: ${summary.tier.label}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatCell("Transfer budget", Fmt.money(summary.transferBudget))
                     StatCell("Wage budget", Fmt.money(summary.wageBudget))
+                    StatCell("Weekly amortisation", Fmt.money(summary.weeklyAmortisation))
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "The transfer budget is set by the board and is separate from " +
+                        "the club balance, so cash in the bank does not mean cash to spend.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            FmCard {
+                SectionHeader("Money in the bank vs money to spend")
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell("Club balance", Fmt.money(summary.balance))
+                    StatCell("Transfer budget", Fmt.money(summary.transferBudget))
+                    StatCell(
+                        "Available cash",
+                        Fmt.money(summary.availableCash),
+                        valueColor = StatColors.elite
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell("Wage budget", Fmt.money(summary.wageBudget))
+                    StatCell("Projected season cost", Fmt.money(summary.projectedSeasonCost))
+                    StatCell("Committed this season", Fmt.money(summary.totalExpense))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Available cash is the lower of the transfer budget and the balance: " +
+                        "the board will not fund spending the club cannot afford.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            FmCard {
+                SectionHeader("Squad-cost control")
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatCell(
+                        "Squad cost",
+                        "${summary.squadCostPercent}%",
+                        valueColor = if (summary.squadCostRatio <= summary.squadCostLimit)
+                            StatColors.elite else StatColors.bad
+                    )
+                    StatCell("Limit", "${(summary.squadCostLimit * 100).toInt()}%")
+                    StatCell("Verdict", summary.squadCostVerdict)
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Squad costs (wages plus transfer amortisation) are measured against " +
+                        "adjusted revenue, in the spirit of UEFA's 70% squad-cost rule.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                val over = summary.squadCostRatio > summary.squadCostLimit
+                InfoPill(
+                    text = if (over) {
+                        "Squad costs are above the safe limit — trim wages or sell before buying."
+                    } else {
+                        "Squad costs are under control."
+                    },
+                    color = if (over) StatColors.bad else StatColors.elite
+                )
             }
         }
 
@@ -264,6 +341,7 @@ fun FinancesScreen(career: Career) {
                 CompositionBar(
                     segments = listOf(
                         "Matchday" to summary.matchdayRevenue.coerceAtLeast(0),
+                        "Broadcast" to summary.commercialRevenue.coerceAtLeast(0),
                         "Prize money" to summary.prizeMoney.coerceAtLeast(0),
                         "Sponsorship" to summary.sponsorshipRevenue.coerceAtLeast(0),
                         "Player sales" to summary.transferIncome.coerceAtLeast(0),
@@ -281,15 +359,47 @@ fun FinancesScreen(career: Career) {
                     segments = listOf(
                         "Wages" to summary.wageSpend.coerceAtLeast(0),
                         "Transfers" to summary.transferSpend.coerceAtLeast(0),
-                        "Stadium" to summary.stadiumSpend.coerceAtLeast(0)
+                        "Matchday costs" to summary.matchdayExpense.coerceAtLeast(0),
+                        "Stadium" to summary.stadiumSpend.coerceAtLeast(0),
+                        "Other" to summary.otherExpense.coerceAtLeast(0)
                     ).filter { it.second > 0 }
                 )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Stadium capacity: ${"%,d".format(career.userClub.stadiumCapacity)} seats.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            }
+        }
+
+        if (career.financialHistory.isNotEmpty()) {
+            item { SectionHeader("Financial history") }
+            items(career.financialHistory.asReversed(), key = { it.seasonNumber }) { record ->
+                FmCard {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            text = record.season,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = (if (record.netProfit >= 0) "+" else "") + Fmt.money(record.netProfit),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (record.netProfit >= 0) StatColors.elite else StatColors.bad
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        StatCell("Income", Fmt.money(record.totalIncome), valueColor = StatColors.elite)
+                        StatCell("Expenses", Fmt.money(record.totalExpense), valueColor = StatColors.bad)
+                        StatCell("Closing balance", Fmt.money(record.closingBalance))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Matchday ${Fmt.money(record.matchdayRevenue)} • " +
+                            "Broadcast ${Fmt.money(record.commercialRevenue)} • " +
+                            "Wages ${Fmt.money(record.wageSpend)} • " +
+                            "Transfers in ${Fmt.money(record.transferSpend)} / out ${Fmt.money(record.transferIncome)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 

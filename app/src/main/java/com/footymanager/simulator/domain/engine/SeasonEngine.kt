@@ -208,6 +208,8 @@ object SeasonEngine {
         var idCounter = career.idCounter
         var stadium = career.stadium
         var managerRecord = career.managerRecord
+        var matchdayFinance = career.lastMatchdayFinance
+        var matchdayNet = 0L
 
         val isUserFixture = match.involves(career.userClubId)
         if (isUserFixture) {
@@ -254,16 +256,30 @@ object SeasonEngine {
                     career.fixtures.filter { it.isPlayed && it.involves(career.userClubId) },
                     career.userClubId
                 )
+                val isRival = career.userClub.rivalClubId == opponent.id
+                val competitionFactor = when (match.competition) {
+                    CompetitionType.CHAMPIONS_LEAGUE -> 1.10
+                    CompetitionType.DOMESTIC_CUP -> 1.05
+                    else -> 1.0
+                }
                 val attendance = StadiumEngine.attendance(
                     stadium = career.stadium,
                     reputation = career.userClub.reputation,
                     opponentReputation = opponent.reputation,
                     recentPointsPerGame = ppg,
                     random = random,
-                    fanSatisfaction = career.fanSatisfaction
+                    fanSatisfaction = career.fanSatisfaction,
+                    isRival = isRival,
+                    competitionFactor = competitionFactor
                 )
-                val revenue = StadiumEngine.matchdayIncome(attendance, career.stadium.ticketPrice)
-                val expenses = StadiumEngine.matchdayExpenses(career.stadium, attendance)
+                val finance = StadiumEngine.matchdayFinance(
+                    stadium = career.stadium,
+                    matchId = match.id,
+                    opponentName = opponent.name,
+                    competitionLabel = match.competitionLabel,
+                    attendance = attendance,
+                    reputation = career.userClub.reputation
+                )
                 val playedHome = career.fixtures.count {
                     it.isPlayed && it.homeClubId == career.userClubId
                 }
@@ -272,7 +288,7 @@ object SeasonEngine {
                     averageAttendance = StadiumEngine.updatedAverage(
                         career.stadium.averageAttendance, attendance, playedHome
                     ),
-                    totalMatchdayIncome = career.stadium.totalMatchdayIncome + revenue
+                    totalMatchdayIncome = career.stadium.totalMatchdayIncome + finance.totalRevenue
                 )
                 idCounter++
                 ledger = ledger + FinanceLedgerEntry(
@@ -280,7 +296,7 @@ object SeasonEngine {
                     date = career.date,
                     season = career.season,
                     description = "Matchday revenue vs ${opponent.name} (${"%,d".format(attendance)} fans)",
-                    amount = revenue,
+                    amount = finance.totalRevenue,
                     category = LedgerCategory.MATCHDAY
                 )
                 idCounter++
@@ -289,9 +305,11 @@ object SeasonEngine {
                     date = career.date,
                     season = career.season,
                     description = "Matchday costs vs ${opponent.name}",
-                    amount = -expenses,
-                    category = LedgerCategory.STADIUM
+                    amount = -finance.totalExpenses,
+                    category = LedgerCategory.MATCHDAY_EXPENSES
                 )
+                matchdayFinance = finance
+                matchdayNet = finance.netProfit
             }
 
             // Board reacts to every user result.
@@ -354,10 +372,16 @@ object SeasonEngine {
             results = career.results + result,
             news = news.takeLast(120),
             board = board,
-            ledger = ledger.takeLast(400),
+            ledger = ledger.takeLast(600),
             idCounter = idCounter,
             stadium = stadium,
-            managerRecord = managerRecord
+            managerRecord = managerRecord,
+            lastMatchdayFinance = matchdayFinance,
+            clubs = if (matchdayNet != 0L) {
+                career.clubs.map {
+                    if (it.id == career.userClubId) it.copy(balance = it.balance + matchdayNet) else it
+                }
+            } else career.clubs
         )
 
         // ---- Champions League: update the league-phase table ----
@@ -365,8 +389,8 @@ object SeasonEngine {
             withLedger.copy(championsLeague = ChampionsLeagueEngine.applyLeagueResult(withLedger.championsLeague, match))
         } else withLedger
 
-        // ---- Finances: wages are paid weekly ----
-        return FinanceEngine.payWeeklyWages(withUcl, idCounter)
+        // Wages are paid once per week by advanceWeek, not once per fixture.
+        return withUcl
     }
 
     private fun styleFatigue(career: Career, clubId: Long, fallback: Double): Double =
@@ -627,6 +651,15 @@ object SeasonEngine {
         // ---- Stadium expansion, sponsorship income and fan mood ----
         updated = weeklyClubOperations(updated, random)
 
+        // ---- Wages are paid once per week ----
+        updated = FinanceEngine.payWeeklyWages(updated, updated.idCounter)
+
+        // ---- Commercial and broadcasting income is banked every week ----
+        updated = FinanceEngine.payWeeklyCommercialIncome(updated, updated.idCounter)
+
+        // ---- Non-wage operating costs are charged every week ----
+        updated = FinanceEngine.payWeeklyOperatingCosts(updated, updated.idCounter)
+
         // AI clubs trade with each other during open windows.
         updated = TransferEngine.runAiTransferActivity(updated, random)
 
@@ -690,6 +723,12 @@ object SeasonEngine {
             random = random
         )
 
+        // ---- Amortisation: transfer fees are written down week by week ----
+        val agedBook = career.amortisationBook.mapNotNull {
+            val remaining = it.weeksRemaining - 1
+            if (remaining <= 0) null else it.copy(weeksRemaining = remaining)
+        }
+
         val updatedClubs = career.clubs.map {
             if (it.id == career.userClubId) it.copy(balance = it.balance + (sponsorship?.weeklyInstalment ?: 0L))
             else it
@@ -698,10 +737,11 @@ object SeasonEngine {
         return career.copy(
             stadium = stadium,
             clubs = updatedClubs,
-            ledger = ledger.takeLast(400),
+            ledger = ledger.takeLast(600),
             news = news.takeLast(120),
             idCounter = idCounter,
             fanSatisfaction = satisfaction,
+            amortisationBook = agedBook,
             board = career.board.copy(confidence = satisfaction.coerceIn(career.board.confidence - 3, career.board.confidence + 3))
         )
     }
@@ -783,6 +823,9 @@ object SeasonEngine {
      * relegates clubs, ages players and generates a fresh fixture list.
      */
     fun endSeason(career: Career, random: Random): Career {
+        // The season's summary is built from the final table before the books roll
+        // over. Prize money is then applied and the closing position recorded, so
+        // the financial history includes the prize money the club actually earned.
         val summary = SeasonSummaryBuilder.build(career)
         var idCounter = career.idCounter
 
@@ -811,13 +854,36 @@ object SeasonEngine {
             } else club
         }
 
+        // Bank the season's final financial position, prize money included.
+        val withHistory = FinanceEngine.recordSeason(
+            career.copy(clubs = clubsWithPrize, ledger = ledger.takeLast(600), idCounter = idCounter)
+        )
+        ledger = withHistory.ledger
+        idCounter = withHistory.idCounter
+
         // ---- Age players, expire contracts, reset season stats ----
         val agedPlayers = career.players.map { DevelopmentEngine.applySeasonTurnover(it) }
 
-        // Expiring contracts: players leave as free agents.
-        val released = agedPlayers.filter { it.contractYearsRemaining == 0 && it.clubId != null }
-        val retainedPlayers = agedPlayers.map {
-            if (it.contractYearsRemaining == 0) it.copy(clubId = null) else it
+        // Expiring contracts: clubs keep the players they still want and let the
+        // rest leave as free agents. Without this the whole world's squads would
+        // drain to nothing within a handful of seasons.
+        val renewedPlayers = agedPlayers.map { p ->
+            if (p.contractYearsRemaining > 0 || p.clubId == null) p
+            else {
+                val squad = agedPlayers.filter { it.clubId == p.clubId }.sortedByDescending { it.overall }
+                val rank = squad.indexOfFirst { it.id == p.id }
+                val wanted = rank < 22 && p.age <= 34
+                val emerging = p.potential > p.overall && p.age <= 28
+                if (wanted || emerging) {
+                    p.copy(contractYearsRemaining = 2 + random.nextInt(3))
+                } else {
+                    p.copy(clubId = null)
+                }
+            }
+        }
+        val retainedPlayers = renewedPlayers
+        val released = renewedPlayers.filter { p ->
+            p.clubId == null && agedPlayers.firstOrNull { it.id == p.id }?.clubId != null
         }
 
         var news = career.news
@@ -972,6 +1038,9 @@ object SeasonEngine {
             awards = emptyList(),
             transferSpendThisSeason = 0L,
             transferIncomeThisSeason = 0L,
+            transferListings = emptyList(),
+            pendingSale = null,
+            lastMatchdayFinance = null,
             idCounter = idCounter,
             championsLeague = uclState,
             lastStandings = previousStandings,
@@ -979,6 +1048,8 @@ object SeasonEngine {
             sponsorship = null,
             sponsorshipSeason = 0,
             stadium = StadiumEngine.progressExpansion(career.stadium),
+            financialHistory = withHistory.financialHistory,
+            amortisationBook = career.amortisationBook,
             managerRecord = career.managerRecord.copy(
                 trophies = career.managerRecord.trophies + summary.trophies
             )

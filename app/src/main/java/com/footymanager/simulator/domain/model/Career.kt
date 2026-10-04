@@ -95,8 +95,24 @@ data class Career(
      * career so interruption at minute 30 resumes at minute 30 rather than
      * restarting. Null when no match is active.
      */
-    val inProgressMatch: InProgressMatchState? = null
+    val inProgressMatch: InProgressMatchState? = null,
+    /** The financial report for the user's most recent home match. */
+    val lastMatchdayFinance: MatchdayFinance? = null,
+    /** The manager's live sale negotiation, if one is open. */
+    val pendingSale: SaleNegotiation? = null,
+    /** Players the manager has listed for sale, with asking prices. */
+    val transferListings: List<TransferListing> = emptyList(),
+    /** Season-by-season revenue and expense records for the financial history. */
+    val financialHistory: List<SeasonFinanceRecord> = emptyList(),
+    /**
+     * Outstanding transfer-fee amortisation, one charge per signing. The sum is
+     * what feeds the squad-cost ratio alongside the wage bill.
+     */
+    val amortisationBook: List<AmortisationCharge> = emptyList()
 ) {
+    /** Outstanding transfer-fee amortisation carried this season, per week. */
+    val weeklyAmortisation: Long
+        get() = amortisationBook.sumOf { it.weeklyCharge }
     val userClub: Club
         get() = clubs.first { it.id == userClubId }
 

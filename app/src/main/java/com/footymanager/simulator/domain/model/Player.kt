@@ -1,8 +1,6 @@
 package com.footymanager.simulator.domain.model
 
 import kotlinx.serialization.Serializable
-import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 /**
  * Outfield and goalkeeper attributes on a 1..99 scale, mirroring the six
@@ -218,36 +216,14 @@ data class Player(
             else -> "Exhausted"
         }
 
-    /** Market value recalculated from age, ability, potential and contract length. */
-    fun recomputeValue(): Long {
-        val base = overall.toDouble()
-        val ageFactor = when {
-            age <= 20 -> 1.55
-            age <= 23 -> 1.45
-            age <= 26 -> 1.25
-            age <= 29 -> 1.00
-            age <= 31 -> 0.72
-            age <= 33 -> 0.45
-            else -> 0.22
-        }
-        val potentialUplift = 1.0 + (potential - overall).coerceAtLeast(0) * 0.045
-        val contractFactor = when (contractYearsRemaining) {
-            0 -> 0.35
-            1 -> 0.72
-            2 -> 0.95
-            else -> 1.0
-        }
-        // Exponential curve keeps elite players far more valuable than squad players.
-        val abilityComponent = Math.pow(base / 50.0, 5.2) * 90_000.0
-        val raw = abilityComponent * ageFactor * potentialUplift * contractFactor
-        return raw.roundToLong().coerceAtLeast(50_000L)
-    }
+    /**
+     * Market value, delegated to [PlayerValuation] so the whole game shares one
+     * valuation model. Kept as a method on [Player] because development and
+     * season turnover recompute it in place.
+     */
+    fun recomputeValue(): Long = PlayerValuer.marketValue(this)
 
-    fun recomputeWage(): Long {
-        val abilityComponent = Math.pow(overall / 50.0, 3.4) * 700.0
-        val ageFactor = if (age <= 21) 0.7 else 1.0
-        return (abilityComponent * ageFactor).roundToLong().coerceAtLeast(1_000L)
-    }
+    fun recomputeWage(): Long = PlayerValuer.weeklyWage(this)
 
     fun matches(search: String): Boolean {
         if (search.isBlank()) return true

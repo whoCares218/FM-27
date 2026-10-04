@@ -2,6 +2,7 @@ package com.footymanager.simulator.domain.data
 
 import com.footymanager.simulator.domain.model.BadgeShape
 import com.footymanager.simulator.domain.model.Club
+import com.footymanager.simulator.domain.model.FinanceModel
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.League
 
@@ -417,15 +418,9 @@ object ClubDatabase {
         for (league in League.all) {
             val seeds = byLeague[league.id] ?: continue
             for (seed in seeds) {
-                val transferBudget = when {
-                    league.tier == 2 -> (seed.rep * seed.rep * 2_400L).coerceAtLeast(500_000L)
-                    seed.rep >= 88 -> (seed.rep * seed.rep * 260_000L)
-                    seed.rep >= 78 -> (seed.rep * seed.rep * 150_000L)
-                    seed.rep >= 70 -> (seed.rep * seed.rep * 90_000L)
-                    else -> (seed.rep * seed.rep * 45_000L)
-                }
-                val wageBudget = (transferBudget * 11L / 100L).coerceAtLeast(120_000L)
-                val balance = (transferBudget * 45L / 100L).coerceAtLeast(1_000_000L)
+                val transferBudget = FinanceModel.transferBudgetFor(seed.rep, league.tier)
+                val wageBudget = FinanceModel.wageBudgetFor(seed.rep)
+                val balance = FinanceModel.openingBalance(seed.rep, league.tier)
 
                 clubs += Club(
                     id = id++,

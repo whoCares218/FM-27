@@ -119,3 +119,33 @@ leagues the same size, or give each league its own matchday count.
 - There are no GitHub Actions workflows in this repo, so PRs carry no CI checks to wait on.
 - `origin/fix/match-lifecycle-persistence` and `origin/main` are both fast-forward bases;
   push new work as a normal (non-force) fast-forward.
+
+## Economy, transfers, stadium & market values (added 2026-10-04)
+
+- The whole economy is one reconciled ledger. `FinanceEngine.summarise` reads totals
+  straight from `career.ledger` split by sign, so the finances screen can never disagree
+  with the transactions. Any new income/expense must both write a ledger entry **and**
+  move the club balance, or the summary and the balance will drift apart.
+- Wages, commercial/broadcast income and non-wage operating costs are charged **once per
+  week** in `SeasonEngine.advanceWeek`, never inside a fixture result. A previous bug paid
+  the whole wage bill inside `applyResultToCareer`, so a season charged it hundreds of
+  times and every club went billions into the red. `FinanceAndMarketTest` has a
+  "once per week" regression test — keep it passing.
+- Home matchday revenue is settled in `applyResultToCareer`: the ledger entry and the club
+  balance are updated together, guarded on the user being the home side.
+- `FinanceModel.annualRevenue` is the anchor for the whole economy: revenue tiers, transfer
+  budgets, wage budgets and operating costs all derive from it. Wages (`PlayerValuer.weeklyWage`)
+  are calibrated so a squad's bill sits just under the board's wage budget; a star signing
+  pushes it over. Do not change one curve without re-checking the other, or budgets will
+  either become trivial or impossible.
+- Market value (`PlayerValuer`) is an original hedonic model (ability, age, potential,
+  contract, form, output, position, injury, morale), not a copied database. Transfer fees
+  (`TransferEngine.requiredPackage`) are market value plus club/contract/buyer factors, so
+  fee and value are deliberately different numbers.
+- Stadiums start at level 1 for every club, but level 1 is the club's own base capacity and
+  the ceiling is reputation-based (`Stadium.maxCapacityForReputation`), so a small club
+  cannot click its way to 150,000 seats. Upgrade cost is non-linear.
+- Contracts renew at season turnover for wanted/emerging players; without that the whole
+  world's squads drain to free agents within a few seasons and wage bills collapse to zero.
+- The multi-season economy is bounded (10-season test): money does not explode, does not
+  become permanently impossible, and richer clubs stay stronger.

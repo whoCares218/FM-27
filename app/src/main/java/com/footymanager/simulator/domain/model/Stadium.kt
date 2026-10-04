@@ -1,17 +1,26 @@
 package com.footymanager.simulator.domain.model
 
 import kotlinx.serialization.Serializable
+import kotlin.math.roundToInt
 
 /**
- * The user club's stadium. Capacity can be expanded over several levels, and the
- * ticket price is a genuine management lever: pricing too high empties seats,
+ * The user club's stadium.
+ *
+ * Every club starts at [level] 1, but level 1 is that club's own starting tier:
+ * a small club's level-1 ground is far smaller than a giant's. Upgrading the
+ * level raises capacity toward the club's reputation-based ceiling, and the cost
+ * of each level grows non-linearly, so the last few levels are a genuine
+ * long-term investment rather than a few clicks.
+ *
+ * The ticket price is a real management lever: pricing too high empties seats,
  * pricing too low leaves money on the table.
  */
 @Serializable
 data class Stadium(
     val name: String,
+    /** Current capacity, in seats. */
     val capacity: Int,
-    /** Upgrade level, 1..5. Each level raises the capacity ceiling. */
+    /** Upgrade level, 1..100. All clubs begin at level 1. */
     val level: Int = 1,
     /** Ticket price per seat, in pounds. */
     val ticketPrice: Int = 32,
@@ -21,20 +30,45 @@ data class Stadium(
     val expansionWeeksRemaining: Int = 0,
     /** Capacity the current expansion will reach when it completes. */
     val expansionTargetCapacity: Int = 0,
-    val totalMatchdayIncome: Long = 0
+    val totalMatchdayIncome: Long = 0,
+    /** Level-1 capacity for this club, the base the level curve grows from. */
+    val baseCapacity: Int = capacity,
+    /** The club's reputation-based capacity ceiling. */
+    val maxCapacity: Int = capacity
 ) {
-    /** Largest capacity the next upgrade can reach. */
-    val maxCapacityForLevel: Int get() = MAX_CAPACITY[level - 1]
-
     val canExpand: Boolean
-        get() = level < MAX_CAPACITY.size && expansionWeeksRemaining == 0
+        get() = level < MAX_LEVEL && expansionWeeksRemaining == 0 && capacity < maxCapacity
 
-    /** Cost of the next expansion, scaled by the size of the ground. */
+    /**
+     * Cost of the next expansion. The per-seat cost rises with the club's size,
+     * and a steep level multiplier means level 90 -> 91 costs far more than
+     * level 1 -> 2.
+     */
     val expansionCost: Long
-        get() = (capacity.toLong() * EXPANSION_COST_PER_SEAT)
+        get() {
+            val seats = (nextCapacity - capacity).coerceAtLeast(1)
+            val perSeat = 2_600.0 + maxCapacity * 0.06
+            val levelFactor = 1.0 + Math.pow((level - 1).toDouble(), 1.25) * 0.10
+            return (seats * perSeat * levelFactor).toLong().coerceAtLeast(250_000L)
+        }
 
+    /** Capacity the club reaches at the next level. */
     val nextCapacity: Int
-        get() = if (level < MAX_CAPACITY.size) MAX_CAPACITY[level] else capacity
+        get() = if (level < MAX_LEVEL) capacityForLevel(level + 1) else capacity
+
+    /** Matchday maintenance grows with the level and size of the ground. */
+    val maintenancePerMatch: Long
+        get() = (capacity.toLong() * (5L + level / 12L)).coerceAtLeast(40_000L)
+
+    /** Capacity implied by a level, interpolating from base to ceiling. */
+    fun capacityForLevel(targetLevel: Int): Int {
+        if (targetLevel <= 1) return baseCapacity
+        if (maxCapacity <= baseCapacity) return baseCapacity
+        val fraction = (targetLevel - 1).toDouble() / (MAX_LEVEL - 1)
+        val curved = Math.pow(fraction, 0.92)
+        val value = baseCapacity + (maxCapacity - baseCapacity) * curved
+        return value.roundToInt().coerceIn(baseCapacity, maxCapacity)
+    }
 
     /** A sensible price band for the club's reputation, used by the UI. */
     fun priceBand(reputation: Int): IntRange {
@@ -43,28 +77,30 @@ data class Stadium(
     }
 
     companion object {
-        /** Capacity ceiling reachable at each upgrade level. */
-        val MAX_CAPACITY = listOf(30_000, 45_000, 60_000, 75_000, 90_000)
-
-        /** Rough cost per additional seat when expanding. */
-        const val EXPANSION_COST_PER_SEAT = 2_400L
+        /** Highest stadium level. */
+        const val MAX_LEVEL = 100
 
         /** Weeks an expansion takes to complete. */
         const val EXPANSION_WEEKS = 6
 
+        /** Capacity ceiling for a club of this reputation. */
+        fun maxCapacityForReputation(reputation: Int): Int = when {
+            reputation >= 90 -> 105_000
+            reputation >= 82 -> 90_000
+            reputation >= 74 -> 75_000
+            reputation >= 66 -> 55_000
+            else -> 38_000
+        }
+
         fun initial(name: String, capacity: Int, reputation: Int): Stadium {
-            val level = when {
-                capacity >= 70_000 -> 5
-                capacity >= 55_000 -> 4
-                capacity >= 42_000 -> 3
-                capacity >= 30_000 -> 2
-                else -> 1
-            }
+            val ceiling = maxCapacityForReputation(reputation).coerceAtLeast(capacity)
             return Stadium(
                 name = name,
                 capacity = capacity,
-                level = level,
-                ticketPrice = (20 + reputation / 5).coerceIn(15, 70)
+                level = 1,
+                ticketPrice = (20 + reputation / 5).coerceIn(15, 70),
+                baseCapacity = capacity,
+                maxCapacity = ceiling
             )
         }
     }

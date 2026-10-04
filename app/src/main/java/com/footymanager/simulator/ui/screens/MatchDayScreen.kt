@@ -66,17 +66,20 @@ import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.Aggression
 import com.footymanager.simulator.domain.model.BuildUp
+import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.CounterAttack
 import com.footymanager.simulator.domain.model.Crossing
 import com.footymanager.simulator.domain.model.DefensiveLine
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.IndividualInstruction
 import com.footymanager.simulator.domain.model.MatchEventType
+import com.footymanager.simulator.domain.model.MatchdayFinance
 import com.footymanager.simulator.domain.model.Mentality
 import com.footymanager.simulator.domain.model.PassingStyle
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.PlayerDuty
 import com.footymanager.simulator.domain.model.PlayStyle
+import com.footymanager.simulator.domain.model.PositionChange
 import com.footymanager.simulator.domain.model.Pressing
 import com.footymanager.simulator.domain.model.TacticalPreset
 import com.footymanager.simulator.domain.model.Tactics
@@ -242,6 +245,30 @@ private fun PreMatchView(
                 SectionHeader("Your starting XI")
                 Spacer(Modifier.height(10.dp))
                 PitchLineup(career, career.selection.startingXi.map { it.playerId }, career.tactics)
+            }
+        }
+
+        matchDay.attendanceEstimate?.let { estimate ->
+            item {
+                FmCard {
+                    SectionHeader("Expected gate")
+                    Spacer(Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        StatCell(
+                            "Expected attendance",
+                            "${"%,d".format(estimate.expectedAttendance)} / ${"%,d".format(estimate.capacity)}"
+                        )
+                        StatCell("Occupancy", "%.0f%%".format(estimate.occupancyPercent))
+                        StatCell("Ticket price", "£${estimate.ticketPrice}")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    StatCell(
+                        "Estimated ticket revenue",
+                        com.footymanager.simulator.ui.components.Fmt.money(estimate.estimatedTicketRevenue),
+                        valueColor = StatColors.elite,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
@@ -1319,6 +1346,21 @@ private fun FinishedMatchView(
             }
         }
 
+        if (matchDay.match.competition == CompetitionType.LEAGUE) {
+            item {
+                LeaguePositionMovement(
+                    change = matchDay.positionChange,
+                    clubName = career.userClub.name
+                )
+            }
+        }
+
+        if (matchDay.matchdayFinance != null) {
+            item {
+                MatchdayFinancialReport(matchDay.matchdayFinance)
+            }
+        }
+
         if (result != null && result.momentum.isNotEmpty()) {
             item {
                 FmCard {
@@ -1403,6 +1445,187 @@ private fun FinishedMatchView(
         item {
             FmPrimaryButton(text = "Continue", onClick = onContinue)
         }
+    }
+}
+
+// ------------------------------------------------------------------- shared UI
+
+/**
+ * Animated league-position movement. A climb slides the marker upward and a
+ * fall slides it down; an unchanged position says so rather than faking motion.
+ */
+@Composable
+private fun LeaguePositionMovement(change: PositionChange, clubName: String) {
+    if (change.before <= 0 && change.after <= 0) return
+    val up = change.movedUp
+    val down = change.movedDown
+    val accent = when {
+        up -> StatColors.elite
+        down -> StatColors.bad
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    // Drives the arrow's travel once the card appears.
+    val travel by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 900),
+        label = "positionTravel"
+    )
+    FmCard(accent = accent) {
+        SectionHeader("League position")
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            PositionBubble(change.before, MaterialTheme.colorScheme.surfaceVariant)
+            Spacer(Modifier.width(16.dp))
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.width(56.dp)) {
+                if (up || down) {
+                    Text(
+                        text = if (up) "▲" else "▼",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = accent,
+                        modifier = Modifier.offset(y = ((if (up) -8f else 8f) * (1f - travel)).dp)
+                    )
+                } else {
+                    Text(
+                        text = "→",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = accent
+                    )
+                }
+            }
+            Spacer(Modifier.width(16.dp))
+            PositionBubble(change.after, accent.copy(alpha = 0.22f), textColor = accent)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = when {
+                up -> "$clubName climb ${change.change} place(s) in the table."
+                down -> "$clubName slip ${-change.change} place(s) in the table."
+                else -> "No position change."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun PositionBubble(position: Int, background: Color, textColor: Color = MaterialTheme.colorScheme.onSurface) {
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .clip(CircleShape)
+            .background(background),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = ordinal(position),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = textColor
+        )
+    }
+}
+
+private fun ordinal(n: Int): String {
+    val suffix = when {
+        n % 100 in 11..13 -> "th"
+        n % 10 == 1 -> "st"
+        n % 10 == 2 -> "nd"
+        n % 10 == 3 -> "rd"
+        else -> "th"
+    }
+    return "$n$suffix"
+}
+
+/**
+ * The professional post-match financial summary. Every revenue stream and cost
+ * is listed so the manager can see exactly what the match earned.
+ */
+@Composable
+private fun MatchdayFinancialReport(finance: MatchdayFinance) {
+    FmCard {
+        SectionHeader("Matchday finance")
+        Spacer(Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            StatCell("Attendance", "${"%,d".format(finance.attendance)}/${"%,d".format(finance.capacity)}")
+            StatCell("Occupancy", "%.1f%%".format(finance.occupancyPercent))
+            StatCell("Ticket price", "£${finance.ticketPrice}")
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Matchday revenue",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = StatColors.elite
+        )
+        FinanceLine("Ticket sales", finance.ticketRevenue, StatColors.elite)
+        FinanceLine("Hospitality", finance.hospitalityRevenue, StatColors.elite)
+        FinanceLine("Concessions", finance.concessionsRevenue, StatColors.elite)
+        FinanceLine("Merchandise", finance.merchandiseRevenue, StatColors.elite)
+        if (finance.competitionIncome > 0) {
+            FinanceLine("Competition income", finance.competitionIncome, StatColors.elite)
+        }
+        FinanceLine("Total revenue", finance.totalRevenue, StatColors.elite, bold = true)
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Matchday expenses",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = StatColors.bad
+        )
+        FinanceLine("Stadium operations", finance.stadiumOperations, StatColors.bad)
+        FinanceLine("Security", finance.security, StatColors.bad)
+        FinanceLine("Staff", finance.staff, StatColors.bad)
+        FinanceLine("Maintenance", finance.maintenance, StatColors.bad)
+        FinanceLine("Total expenses", finance.totalExpenses, StatColors.bad, bold = true)
+
+        Spacer(Modifier.height(12.dp))
+        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                text = "Net matchday profit",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = com.footymanager.simulator.ui.components.Fmt.money(finance.netProfit),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (finance.netProfit >= 0) StatColors.elite else StatColors.bad
+            )
+        }
+    }
+}
+
+@Composable
+private fun FinanceLine(label: String, amount: Long, color: Color, bold: Boolean = false) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = if (bold) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = com.footymanager.simulator.ui.components.Fmt.money(amount),
+            style = if (bold) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            color = color
+        )
     }
 }
 
