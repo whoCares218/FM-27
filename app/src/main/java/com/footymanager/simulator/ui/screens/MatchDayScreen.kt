@@ -65,13 +65,20 @@ import com.footymanager.simulator.domain.engine.MatchPhase
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.Aggression
+import com.footymanager.simulator.domain.model.BuildUp
+import com.footymanager.simulator.domain.model.CounterAttack
+import com.footymanager.simulator.domain.model.Crossing
 import com.footymanager.simulator.domain.model.DefensiveLine
 import com.footymanager.simulator.domain.model.Formation
+import com.footymanager.simulator.domain.model.IndividualInstruction
 import com.footymanager.simulator.domain.model.MatchEventType
 import com.footymanager.simulator.domain.model.Mentality
+import com.footymanager.simulator.domain.model.PassingStyle
 import com.footymanager.simulator.domain.model.Player
+import com.footymanager.simulator.domain.model.PlayerDuty
 import com.footymanager.simulator.domain.model.PlayStyle
 import com.footymanager.simulator.domain.model.Pressing
+import com.footymanager.simulator.domain.model.TacticalPreset
 import com.footymanager.simulator.domain.model.Tactics
 import com.footymanager.simulator.domain.model.Tempo
 import com.footymanager.simulator.domain.model.Width
@@ -113,6 +120,7 @@ fun MatchDayScreen(
     onContinueExtraTime: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onQuickSimFromHere: () -> Unit,
     onMakeLiveSub: (Long, Long) -> Unit,
     onPlanSub: (Long, Long) -> Unit,
     onCancelSub: (Long) -> Unit,
@@ -123,15 +131,15 @@ fun MatchDayScreen(
     // back button, or a match in progress would be abandoned by a stray swipe.
     BackHandler(enabled = true) { onBack() }
     when {
-        matchDay.isPlayed -> FinishedMatchView(matchDay, career, onContinueAfterMatch)
+        matchDay.isPlayed -> FinishedMatchView(matchDay, career, onContinueAfterMatch, onBack)
         !matchDay.started -> PreMatchView(career, matchDay, onBack, onStart)
         matchDay.awaitingHalfTime -> HalfTimeView(
             career, matchDay, onBack, onContinueSecondHalf, onPlanSub, onCancelSub,
             onMakeLiveSub, onApplyLiveTactics
         )
         else -> LiveMatchView(
-            career, matchDay, onBack, onPause, onResume, onMakeLiveSub, onContinueExtraTime,
-            onApplyLiveTactics
+            career, matchDay, onBack, onPause, onResume, onQuickSimFromHere, onMakeLiveSub,
+            onContinueExtraTime, onApplyLiveTactics
         )
     }
 }
@@ -153,7 +161,18 @@ private fun PreMatchView(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { MatchHeader(career, matchDay, onBack) }
+        item {
+            MatchHeader(career, matchDay, onBack) {
+                MatchTopControl(
+                    matchDay = matchDay,
+                    onStart = onStart,
+                    onPause = {},
+                    onResume = {},
+                    onContinueSecondHalf = {},
+                    onContinueExtraTime = {}
+                )
+            }
+        }
 
         item {
             FmCard(accent = MaterialTheme.colorScheme.primary, padding = 16.dp) {
@@ -254,18 +273,16 @@ private fun PreMatchView(
         }
 
         item {
-            FmPrimaryButton(
-                text = "Start Match",
-                onClick = { onStart(MatchMode.PLAY) },
-                icon = Icons.Filled.PlayArrow
+            // The primary control lives in the top-right header. Here we only offer
+            // a gentle hint so the manager knows where to start the match.
+            Text(
+                text = "Use START MATCH or QUICK SIM at the top right to begin.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(8.dp))
-            FmSecondaryButton(
-                text = "Quick Sim",
-                onClick = { onStart(MatchMode.QUICK) },
-                icon = Icons.Outlined.FastForward
-            )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
             FmSecondaryButton(text = "Back", onClick = onBack)
         }
     }
@@ -299,6 +316,7 @@ private fun LiveMatchView(
     onBack: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onQuickSimFromHere: () -> Unit,
     onMakeLiveSub: (Long, Long) -> Unit,
     onContinueExtraTime: () -> Unit,
     onApplyLiveTactics: (Tactics) -> Unit
@@ -313,7 +331,18 @@ private fun LiveMatchView(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { MatchHeader(career, matchDay, onBack) }
+        item {
+            MatchHeader(career, matchDay, onBack) {
+                MatchTopControl(
+                    matchDay = matchDay,
+                    onStart = {},
+                    onPause = onPause,
+                    onResume = onResume,
+                    onContinueSecondHalf = {},
+                    onContinueExtraTime = onContinueExtraTime
+                )
+            }
+        }
 
         // ---- Scoreboard: badges, score, minute, competition, stadium ----
         item {
@@ -482,15 +511,22 @@ private fun LiveMatchView(
                     if (showTactics) {
                         Spacer(Modifier.height(12.dp))
                         LiveTacticsPanel(
-                            tactics = career.tactics,
+                            career = career,
                             onApply = onApplyLiveTactics
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    FmPrimaryButton(
-                        text = "Resume",
-                        onClick = onResume,
-                        icon = Icons.Filled.PlayArrow
+                    FmSecondaryButton(
+                        text = "Quick Sim From Here",
+                        onClick = onQuickSimFromHere,
+                        icon = Icons.Outlined.FastForward
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Continues this exact match from minute ${matchDay.minute} " +
+                            "with the current score, cards and substitutions.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -590,7 +626,18 @@ private fun HalfTimeView(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { MatchHeader(career, matchDay, onBack) }
+        item {
+            MatchHeader(career, matchDay, onBack) {
+                MatchTopControl(
+                    matchDay = matchDay,
+                    onStart = {},
+                    onPause = {},
+                    onResume = {},
+                    onContinueSecondHalf = onContinue,
+                    onContinueExtraTime = {}
+                )
+            }
+        }
 
         item {
             FmCard(accent = StatColors.average, padding = 16.dp) {
@@ -764,10 +811,10 @@ private fun HalfTimeTacticsCard(career: Career, onApplyLiveTactics: (Tactics) ->
         }
         if (expanded) {
             Spacer(Modifier.height(10.dp))
-            TacticsEditor(tactics = career.tactics, onApply = onApplyLiveTactics)
+            TacticsEditor(career = career, onApply = onApplyLiveTactics)
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Changes take effect for the second half.",
+                text = "No time limit at half time. Changes take effect when you start the second half.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -777,12 +824,12 @@ private fun HalfTimeTacticsCard(career: Career, onApplyLiveTactics: (Tactics) ->
 
 /** Live tactics editor shown when the manager pauses mid-match. */
 @Composable
-private fun LiveTacticsPanel(tactics: Tactics, onApply: (Tactics) -> Unit) {
+private fun LiveTacticsPanel(career: Career, onApply: (Tactics) -> Unit) {
     Column {
-        TacticsEditor(tactics = tactics, onApply = onApply)
+        TacticsEditor(career = career, onApply = onApply)
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "Changes apply immediately for the rest of the match.",
+            text = "Changes apply immediately to the running match.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -796,7 +843,25 @@ private fun LiveTacticsPanel(tactics: Tactics, onApply: (Tactics) -> Unit) {
  * match rather than only decorating the screen.
  */
 @Composable
-private fun TacticsEditor(tactics: Tactics, onApply: (Tactics) -> Unit) {
+private fun TacticsEditor(career: Career, onApply: (Tactics) -> Unit) {
+    val tactics = career.tactics
+    SectionHeader("Start from a preset")
+    Spacer(Modifier.height(6.dp))
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(TacticalPreset.entries.toList(), key = { it.name }) { preset ->
+            Text(
+                text = preset.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onApply(preset.applyTo(tactics)) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            )
+        }
+    }
+    Spacer(Modifier.height(14.dp))
     Text(
         text = "FORMATION",
         style = MaterialTheme.typography.labelSmall,
@@ -872,12 +937,127 @@ private fun TacticsEditor(tactics: Tactics, onApply: (Tactics) -> Unit) {
     )
     Spacer(Modifier.height(12.dp))
     OptionSelector(
+        label = "Passing",
+        options = PassingStyle.entries.toList(),
+        selected = tactics.passingStyle,
+        onSelect = { onApply(tactics.copy(passingStyle = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Build-up",
+        options = BuildUp.entries.toList(),
+        selected = tactics.buildUp,
+        onSelect = { onApply(tactics.copy(buildUp = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Counter-attack",
+        options = CounterAttack.entries.toList(),
+        selected = tactics.counterAttack,
+        onSelect = { onApply(tactics.copy(counterAttack = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
+        label = "Crossing",
+        options = Crossing.entries.toList(),
+        selected = tactics.crossing,
+        onSelect = { onApply(tactics.copy(crossing = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(12.dp))
+    OptionSelector(
         label = "Aggression",
         options = Aggression.entries.toList(),
         selected = tactics.aggression,
         onSelect = { onApply(tactics.copy(aggression = it)) },
         optionLabel = { it.label }
     )
+    Spacer(Modifier.height(14.dp))
+    LiveIndividualInstructions(career = career, onApply = onApply)
+}
+
+/**
+ * Live per-player instructions. These are individual overrides carried on the
+ * tactics object, so changing them mid-match feeds the running engine directly.
+ */
+@Composable
+private fun LiveIndividualInstructions(career: Career, onApply: (Tactics) -> Unit) {
+    val starters = career.selection.startingXi
+        .sortedBy { it.slotIndex }
+        .mapNotNull { career.player(it.playerId) }
+    var selectedId by remember { mutableStateOf(starters.firstOrNull()?.id) }
+    val selected = selectedId?.let { id -> starters.firstOrNull { it.id == id } } ?: return
+    val instruction = career.tactics.playerInstructions[selected.id] ?: IndividualInstruction.DEFAULT
+
+    fun push(updated: IndividualInstruction) {
+        val map = career.tactics.playerInstructions.toMutableMap()
+        if (updated == IndividualInstruction.DEFAULT) map.remove(selected.id) else map[selected.id] = updated
+        onApply(career.tactics.copy(playerInstructions = map))
+    }
+
+    SectionHeader("Individual instructions")
+    Spacer(Modifier.height(6.dp))
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(starters, key = { it.id }) { player ->
+            Text(
+                text = player.name.substringAfterLast(' '),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (player.id == selectedId) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (player.id == selectedId) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable { selectedId = player.id }
+                    .padding(horizontal = 8.dp, vertical = 5.dp)
+            )
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    OptionSelector(
+        label = selected.name.substringAfterLast(' ') + " duty",
+        options = PlayerDuty.entries.toList(),
+        selected = instruction.duty,
+        onSelect = { push(instruction.copy(duty = it)) },
+        optionLabel = { it.label }
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(
+            "Get forward" to instruction.getForward,
+            "Stay back" to instruction.stayBack
+        ).forEach { (label, checked) ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (checked) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (checked) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable {
+                        push(
+                            when (label) {
+                                "Get forward" -> instruction.copy(
+                                    getForward = !instruction.getForward,
+                                    stayBack = false
+                                )
+                                else -> instruction.copy(stayBack = !instruction.stayBack, getForward = false)
+                            }
+                        )
+                    }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            )
+        }
+    }
 }
 
 // ----------------------------------------------------------- substitutions
@@ -908,7 +1088,7 @@ private fun SubstitutionPanel(
     val canConfirm = offId != null && onId != null
 
     Text(
-        text = "STEP 1 · SUBSTITUTE OUT",
+        text = "CURRENT XI · SELECT PLAYER TO TAKE OFF",
         style = MaterialTheme.typography.labelSmall,
         color = if (offId != null) StatColors.bad else MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.Bold
@@ -924,10 +1104,21 @@ private fun SubstitutionPanel(
             )
         }
     }
+    offId?.let { id ->
+        byId[id]?.let { player ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "SUB OUT: ${player.position.short} ${player.name}",
+                style = MaterialTheme.typography.labelMedium,
+                color = StatColors.bad,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
 
     Spacer(Modifier.height(12.dp))
     Text(
-        text = "STEP 2 · SUBSTITUTE IN",
+        text = "BENCH · SELECT PLAYER TO BRING ON",
         style = MaterialTheme.typography.labelSmall,
         color = if (onId != null) StatColors.elite else MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.Bold
@@ -951,8 +1142,26 @@ private fun SubstitutionPanel(
             }
         }
     }
+    onId?.let { id ->
+        byId[id]?.let { player ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "SUB IN: ${player.position.short} ${player.name}",
+                style = MaterialTheme.typography.labelMedium,
+                color = StatColors.elite,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
 
     Spacer(Modifier.height(14.dp))
+    Text(
+        text = "SUBSTITUTION PREVIEW",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.Bold
+    )
+    Spacer(Modifier.height(6.dp))
     // Clear OUT / IN summary so the direction of the change is unambiguous.
     Row(
         modifier = Modifier
@@ -1056,7 +1265,8 @@ private fun SubChip(
 private fun FinishedMatchView(
     matchDay: MatchDayState,
     career: Career,
-    onContinue: () -> Unit
+    onContinue: () -> Unit,
+    onBack: () -> Unit
 ) {
     val result = matchDay.result
     val home = if (matchDay.isHome) career.userClub else matchDay.opponent
@@ -1067,7 +1277,18 @@ private fun FinishedMatchView(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { MatchHeader(career, matchDay, null) }
+        item {
+            MatchHeader(career, matchDay, onBack) {
+                MatchTopControl(
+                    matchDay = matchDay,
+                    onStart = {},
+                    onPause = {},
+                    onResume = {},
+                    onContinueSecondHalf = {},
+                    onContinueExtraTime = {}
+                )
+            }
+        }
 
         item {
             FmCard(accent = MaterialTheme.colorScheme.primary, padding = 16.dp) {
@@ -1188,7 +1409,12 @@ private fun FinishedMatchView(
 // ------------------------------------------------------------------- shared UI
 
 @Composable
-private fun MatchHeader(career: Career, matchDay: MatchDayState, onBack: (() -> Unit)?) {
+private fun MatchHeader(
+    career: Career,
+    matchDay: MatchDayState,
+    onBack: (() -> Unit)?,
+    control: @Composable () -> Unit
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (onBack != null) {
             IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
@@ -1214,6 +1440,103 @@ private fun MatchHeader(career: Career, matchDay: MatchDayState, onBack: (() -> 
             )
         }
         if (matchDay.mode == MatchMode.QUICK) InfoPill("Quick Sim")
+        Spacer(Modifier.width(6.dp))
+        control()
+    }
+}
+
+/**
+ * The single match-control button, pinned to the top-right of every match screen.
+ *
+ * It always shows exactly one action that matches the live state, so there is
+ * never a contradictory pair of controls on screen:
+ *  - before kick-off: START MATCH (with QUICK SIM as the alternate mode)
+ *  - while running:   PAUSE
+ *  - while paused:    CONTINUE
+ *  - at the interval: START 2ND HALF
+ *  - after full time: GAME ENDED (disabled)
+ */
+@Composable
+private fun MatchTopControl(
+    matchDay: MatchDayState,
+    onStart: (MatchMode) -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onContinueSecondHalf: () -> Unit,
+    onContinueExtraTime: () -> Unit
+) {
+    when {
+        matchDay.isPlayed -> {
+            ControlChip(text = "GAME ENDED", enabled = false, onClick = {})
+        }
+        !matchDay.started -> {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ControlChip(
+                    text = "QUICK SIM",
+                    primary = false,
+                    onClick = { onStart(MatchMode.QUICK) }
+                )
+                ControlChip(
+                    text = "START MATCH",
+                    primary = true,
+                    onClick = { onStart(MatchMode.PLAY) }
+                )
+            }
+        }
+        matchDay.awaitingHalfTime -> {
+            ControlChip(text = "START 2ND HALF", primary = true, onClick = onContinueSecondHalf)
+        }
+        matchDay.awaitingExtraTime -> {
+            ControlChip(text = "PLAY EXTRA TIME", primary = true, onClick = onContinueExtraTime)
+        }
+        matchDay.simulating -> {
+            ControlChip(text = "PAUSE", primary = false, onClick = onPause)
+        }
+        else -> {
+            ControlChip(text = "CONTINUE", primary = true, onClick = onResume)
+        }
+    }
+}
+
+/** A compact, high-contrast control used for the top-right match action. */
+@Composable
+private fun ControlChip(
+    text: String,
+    onClick: () -> Unit,
+    primary: Boolean = true,
+    enabled: Boolean = true
+) {
+    val bg = when {
+        !enabled -> MaterialTheme.colorScheme.surfaceVariant
+        primary -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val fg = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+        primary -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .border(
+                width = 1.dp,
+                color = if (primary && enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(10.dp)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = fg,
+            maxLines = 1
+        )
     }
 }
 

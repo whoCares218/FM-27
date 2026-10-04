@@ -1,23 +1,34 @@
 package com.footymanager.simulator.domain.engine
 
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.ContractTerms
 import com.footymanager.simulator.domain.model.FinanceLedgerEntry
 import com.footymanager.simulator.domain.model.LedgerCategory
 import com.footymanager.simulator.domain.model.NewsCategory
 import com.footymanager.simulator.domain.model.NewsItem
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
+import com.footymanager.simulator.domain.model.PlayerResponse
 import com.footymanager.simulator.domain.model.Position
+import com.footymanager.simulator.domain.model.SellingClubResponse
+import com.footymanager.simulator.domain.model.SquadRole
 import com.footymanager.simulator.domain.model.TransferOffer
+import com.footymanager.simulator.domain.model.TransferPackage
 import kotlin.random.Random
 
 /**
- * Transfer market: valuation, negotiation, and (cheap) AI-to-AI trading.
+ * Transfer market: valuation, negotiation and (cheap) AI-to-AI trading.
  *
- * Negotiation is intentionally two-sided but simple: the selling club names an
- * asking price, the player names a wage, and the manager can keep improving the
- * offer. Each rejected bid slightly softens the selling club's stance so a
- * determined manager can eventually get a deal done at a fair price.
+ * Negotiation is immediate. When the manager submits a bid the selling club
+ * answers at once with ACCEPT, REJECT or a counter-offer, and the moment a fee is
+ * agreed the player answers the personal terms at once too. Nothing waits for
+ * another in-game day, so a deal can be done in a single sitting.
+ *
+ * A bid is a package: cash plus, optionally, one of the buyer's own players in
+ * part exchange. The selling club reasons about the combined value together with
+ * the player's rating, potential, age, contract length, importance to the squad,
+ * the club's finances and the buyer's reputation, so a lower cash bid can still
+ * succeed when the makeweight is good enough.
  */
 object TransferEngine {
 
@@ -33,10 +44,16 @@ object TransferEngine {
         }
     }
 
-    /** Wage the player will sign for. */
-    fun expectedWage(career: Career, player: Player, buyingClubId: Long): Long {
+    /** Wage the player will sign for, adjusted for the role they are promised. */
+    fun expectedWage(
+        career: Career,
+        player: Player,
+        buyingClubId: Long,
+        role: SquadRole = SquadRole.ROTATION
+    ): Long {
         val buyingClub = career.clubOrThrow(buyingClubId)
-        return AiManager.expectedWage(player, buyingClub.reputation, career.difficulty.transferDifficulty)
+        val base = AiManager.expectedWage(player, buyingClub.reputation, career.difficulty.transferDifficulty)
+        return (base * role.wageMultiplier).toLong().coerceAtLeast(player.wagePerWeek)
     }
 
     /** Every player the user's club could realistically bid for. */
@@ -51,17 +68,86 @@ object TransferEngine {
         }.sortedByDescending { it.overall }
     }
 
-    /** Creates a pending offer from the user's club. */
+    /** How highly the selling club values a player, 0..1 (higher = more important). */
+    private fun importance(player: Player, squad: List<Player>): Double {
+        if (squad.isEmpty()) return 0.5
+        val ranked = squad.sortedByDescending { it.overall }
+        val rank = ranked.indexOfFirst { it.id == player.id }
+        if (rank < 0) return 0.4
+        val depth = squad.count { it.position == player.position }
+        // A player who is clearly the best in a thinly-stocked position is vital.
+        val positionalRank = squad.filter { it.position == player.position }
+            .sortedByDescending { it.overall }
+            .indexOfFirst { it.id == player.id }
+        val depthFactor = (depth - positionalRank).coerceAtLeast(0) * 0.08
+        val qualityFactor = 1.0 - (rank.toDouble() / ranked.size) * 0.5
+        return (qualityFactor + depthFactor).coerceIn(0.2, 1.0)
+    }
+
+    /**
+     * The package the selling club wants before it will part with the player.
+     * Factors: rating, potential, age, value, contract length, importance, the
+     * selling club's finances, squad depth, buyer reputation and current form.
+     */
+    fun requiredPackage(career: Career, player: Player, buyingClubId: Long): TransferPackage {
+        val sellingClub = player.clubId?.let { career.club(it) }
+        val base = askingPrice(career, player, player.clubId)
+        if (sellingClub == null) return TransferPackage(fee = 0L)
+
+        val squad = career.squadOf(sellingClub.id)
+        val importance = importance(player, squad)
+
+        // Contract length: a player in his final year is cheaper to prise away.
+        val contractFactor = when (player.contractYearsRemaining) {
+            0 -> 0.70
+            1 -> 0.84
+            2 -> 0.96
+            else -> 1.0
+        }
+        // Potential: a high-ceiling youngster commands a premium.
+        val potentialFactor = 1.0 + (player.potential - player.overall).coerceAtLeast(0) * 0.012
+        // Age: peak-age players are the most expensive to replace.
+        val ageFactor = when {
+            player.age <= 21 -> 1.10
+            player.age <= 27 -> 1.06
+            player.age <= 30 -> 1.0
+            player.age <= 33 -> 0.92
+            else -> 0.82
+        }
+        // A rich club can afford to say no; a cash-strapped one is keener to sell.
+        val financesFactor = when {
+            sellingClub.balance > sellingClub.wageBudget * 8 -> 1.10
+            sellingClub.balance < 0 -> 0.90
+            else -> 1.0
+        }
+        // Squad depth: plenty of cover makes the player expendable.
+        val positionalDepth = squad.count { it.position == player.position }
+        val depthFactor = if (positionalDepth >= 4) 0.92 else 1.0
+        // Buyer reputation: a giant can be squeezed for a little more.
+        val buyerFactor = 1.0 + (career.clubOrThrow(buyingClubId).reputation - 70) * 0.003
+        // A player in red-hot form costs more.
+        val formFactor = 1.0 + (player.form - 5.0) * 0.012
+        // Importance is the strongest single signal.
+        val importanceFactor = 0.86 + importance * 0.40
+
+        val wanted = (base * contractFactor * potentialFactor * ageFactor * financesFactor *
+            depthFactor * buyerFactor * formFactor * importanceFactor).toLong()
+        return TransferPackage(fee = wanted.coerceAtLeast(player.value / 2))
+    }
+
+    /**
+     * Creates a bid and resolves it immediately: the selling club answers, and if
+     * it accepts the player answers the personal terms in the same instant.
+     */
     fun createUserOffer(
         career: Career,
         player: Player,
-        fee: Long,
-        wage: Long,
-        contractYears: Int,
+        offerPackage: TransferPackage,
+        terms: ContractTerms,
         isLoan: Boolean = false
     ): Career {
-        val asking = askingPrice(career, player, player.clubId)
-        val expected = expectedWage(career, player, career.userClubId)
+        val asking = requiredPackage(career, player, career.userClubId)
+        val expected = expectedWage(career, player, career.userClubId, terms.squadRole)
         var idCounter = career.idCounter
         idCounter++
         val offer = TransferOffer(
@@ -70,87 +156,192 @@ object TransferEngine {
             playerName = player.name,
             fromClubId = player.clubId ?: 0L,
             toClubId = career.userClubId,
-            fee = fee,
-            wagePerWeek = wage,
-            contractYears = contractYears,
+            fee = offerPackage.fee,
+            wagePerWeek = terms.wagePerWeek,
+            contractYears = terms.contractYears,
             status = OfferStatus.PENDING,
-            askingPrice = asking,
+            askingPrice = asking.fee,
             expectedWage = expected,
             isUserInitiated = true,
             isLoan = isLoan,
             createdMatchday = career.matchdayIndex,
-            message = "Offer submitted"
+            message = "Bid submitted",
+            offerPackage = offerPackage,
+            squadRole = terms.squadRole,
+            signingBonus = terms.signingBonus,
+            releaseClause = terms.releaseClause
         )
-        return career.copy(
-            pendingOffers = career.pendingOffers + offer,
-            idCounter = idCounter
-        )
+        val withOffer = career.copy(pendingOffers = career.pendingOffers + offer, idCounter = idCounter)
+        return evaluateSellingClub(withOffer, offer.id, random = null)
     }
 
     /**
-     * Evaluates a pending user offer and either completes the transfer or returns
-     * a rejection with the selling club's revised demand.
+     * The user accepts the selling club's counter-offer. The agreed package is
+     * then put to the player immediately.
+     */
+    fun acceptCounter(career: Career, offerId: Long): Career {
+        val offer = career.pendingOffers.firstOrNull { it.id == offerId } ?: return career
+        val counter = offer.counterPackage ?: return career
+        val agreed = offer.copy(
+            offerPackage = counter,
+            fee = counter.fee,
+            askingPrice = counter.fee,
+            status = OfferStatus.ACCEPTED,
+            sellingClubResponse = SellingClubResponse.ACCEPT,
+            counterPackage = null,
+            message = "Fee agreed: ${counter.label()}"
+        )
+        val updated = career.copy(
+            pendingOffers = career.pendingOffers.map { if (it.id == offerId) agreed else it }
+        )
+        return evaluatePlayer(updated, offerId)
+    }
+
+    /** The user submits improved personal terms after the player asked for more. */
+    fun submitPlayerTerms(career: Career, offerId: Long, terms: ContractTerms): Career {
+        val offer = career.pendingOffers.firstOrNull { it.id == offerId } ?: return career
+        val expected = expectedWage(career, career.player(offer.playerId) ?: return career,
+            career.userClubId, terms.squadRole)
+        val updated = career.copy(
+            pendingOffers = career.pendingOffers.map {
+                if (it.id == offerId) it.copy(
+                    wagePerWeek = terms.wagePerWeek,
+                    contractYears = terms.contractYears,
+                    squadRole = terms.squadRole,
+                    signingBonus = terms.signingBonus,
+                    releaseClause = terms.releaseClause,
+                    expectedWage = expected,
+                    status = OfferStatus.ACCEPTED,
+                    playerResponse = null
+                ) else it
+            }
+        )
+        return evaluatePlayer(updated, offerId)
+    }
+
+    /** Withdraws a bid, however far it has progressed. */
+    fun cancelOffer(career: Career, offerId: Long): Career = career.copy(
+        pendingOffers = career.pendingOffers.map {
+            if (it.id == offerId) it.copy(status = OfferStatus.WITHDRAWN, message = "Offer withdrawn")
+            else it
+        }
+    )
+
+    /**
+     * Re-evaluates an offer from the start (legacy/test entry point). Re-runs the
+     * selling-club check on the current package and, if agreed, the player check.
      */
     fun resolveOffer(career: Career, offerId: Long, random: Random): Career {
         val offer = career.pendingOffers.firstOrNull { it.id == offerId } ?: return career
-        if (offer.status != OfferStatus.PENDING) return career
+        return when {
+            offer.status == OfferStatus.COMPLETED || offer.status == OfferStatus.WITHDRAWN -> career
+            offer.sellingClubAgreed -> evaluatePlayer(career, offerId)
+            else -> evaluateSellingClub(career, offerId, random)
+        }
+    }
+
+    // ------------------------------------------------------------ evaluation
+
+    /** The selling club's verdict on the current package, applied immediately. */
+    private fun evaluateSellingClub(career: Career, offerId: Long, random: Random?): Career {
+        val offer = career.pendingOffers.firstOrNull { it.id == offerId } ?: return career
         val player = career.player(offer.playerId) ?: return career
+        val required = requiredPackage(career, player, offer.toClubId)
+        val offered = offer.offerPackage
+        val total = offered.totalValue
+        val clubName = career.club(offer.fromClubId)?.name ?: "The club"
 
-        val asking = askingPrice(career, player, player.clubId)
-        val expected = expectedWage(career, player, career.userClubId)
-
-        // ---- Fee check ----
-        // A bid within 6% of the asking price is accepted; anything less is rejected
-        // but softens the demand for next time.
-        val feeAcceptable = asking == 0L || offer.fee >= (asking * 0.94).toLong()
-        val wageAcceptable = offer.wagePerWeek >= (expected * 0.96).toLong()
-
-        if (feeAcceptable && wageAcceptable) {
-            return completeTransfer(career, offer, player)
+        return when {
+            required.fee <= 0L || total >= (required.fee * 0.97).toLong() -> {
+                // The selling club accepts: hand the deal straight to the player.
+                val agreed = offer.copy(
+                    status = OfferStatus.ACCEPTED,
+                    sellingClubResponse = SellingClubResponse.ACCEPT,
+                    askingPrice = required.fee,
+                    counterPackage = null,
+                    message = "Fee agreed with $clubName"
+                )
+                evaluatePlayer(
+                    career.copy(
+                        pendingOffers = career.pendingOffers.map { if (it.id == offerId) agreed else it }
+                    ),
+                    offerId
+                )
+            }
+            total >= (required.fee * 0.72).toLong() -> {
+                // Close enough to talk: the club counters with what it wants.
+                val topUp = (required.fee - (offered.playerOfferedValue)).coerceAtLeast(
+                    (required.fee * 0.5).toLong()
+                )
+                val counter = if (offered.hasMakeweight) {
+                    offered.copy(fee = topUp)
+                } else {
+                    TransferPackage(fee = required.fee)
+                }
+                val countered = offer.copy(
+                    status = OfferStatus.COUNTERED,
+                    sellingClubResponse = SellingClubResponse.NEGOTIATE,
+                    counterPackage = counter,
+                    message = "$clubName counter: ${counter.label()}"
+                )
+                career.copy(
+                    pendingOffers = career.pendingOffers.map { if (it.id == offerId) countered else it }
+                )
+            }
+            else -> {
+                val rejected = offer.copy(
+                    status = OfferStatus.REJECTED,
+                    sellingClubResponse = SellingClubResponse.REJECT,
+                    askingPrice = required.fee,
+                    message = "$clubName rejected the bid. They value ${player.name} at ${formatMoney(required.fee)}."
+                )
+                career.copy(
+                    pendingOffers = career.pendingOffers.map { if (it.id == offerId) rejected else it }
+                )
+            }
         }
+    }
 
-        var idCounter = career.idCounter
-        idCounter++
-        val revisedAsking = if (!feeAcceptable) {
-            // The selling club comes down slightly on each failed attempt.
-            maxOf(player.value, (asking * 0.94).toLong())
-        } else asking
+    /** The player's verdict on the personal terms, applied immediately. */
+    private fun evaluatePlayer(career: Career, offerId: Long): Career {
+        val offer = career.pendingOffers.firstOrNull { it.id == offerId } ?: return career
+        if (offer.status == OfferStatus.COMPLETED || offer.status == OfferStatus.WITHDRAWN) return career
+        val player = career.player(offer.playerId) ?: return career
+        val expected = expectedWage(career, player, offer.toClubId, offer.squadRole)
 
-        val revisedWage = if (!wageAcceptable) {
-            maxOf(player.wagePerWeek, (expected * 0.97).toLong())
-        } else expected
+        val wageRatio = if (expected <= 0L) 1.0 else offer.wagePerWeek.toDouble() / expected
+        val bonusHelp = if (offer.signingBonus > 0L) 0.03 else 0.0
+        val clauseHelp = if (offer.releaseClause > 0L) 0.02 else 0.0
+        val effectiveRatio = wageRatio + bonusHelp + clauseHelp
 
-        val message = when {
-            !feeAcceptable && !wageAcceptable ->
-                "Bid rejected. ${career.club(player.clubId ?: -1L)?.name ?: "The club"} want £${formatMoney(revisedAsking)} and the player wants £${formatMoney(revisedWage)}/wk."
-            !feeAcceptable ->
-                "Transfer fee rejected. ${career.club(player.clubId ?: -1L)?.name ?: "The club"} are holding out for £${formatMoney(revisedAsking)}."
-            else ->
-                "${player.name} rejected the personal terms. He is asking for £${formatMoney(revisedWage)}/wk."
+        return when {
+            effectiveRatio >= 0.98 -> {
+                // The player accepts: the deal completes immediately.
+                completeTransfer(career, offer, player)
+            }
+            effectiveRatio >= 0.85 -> {
+                val countered = offer.copy(
+                    status = OfferStatus.COUNTERED,
+                    playerResponse = PlayerResponse.NEGOTIATE,
+                    expectedWage = expected,
+                    message = "${player.name} wants ${formatMoney(expected)}/wk to sign."
+                )
+                career.copy(
+                    pendingOffers = career.pendingOffers.map { if (it.id == offerId) countered else it }
+                )
+            }
+            else -> {
+                val rejected = offer.copy(
+                    status = OfferStatus.REJECTED,
+                    playerResponse = PlayerResponse.REJECT,
+                    expectedWage = expected,
+                    message = "${player.name} rejected the personal terms. He is asking for ${formatMoney(expected)}/wk."
+                )
+                career.copy(
+                    pendingOffers = career.pendingOffers.map { if (it.id == offerId) rejected else it }
+                )
+            }
         }
-
-        val updatedOffer = offer.copy(
-            status = OfferStatus.REJECTED,
-            askingPrice = revisedAsking,
-            expectedWage = revisedWage,
-            message = message
-        )
-
-        val news = career.news + NewsItem(
-            id = idCounter,
-            category = NewsCategory.TRANSFER,
-            headline = "Bid for ${player.name} rejected",
-            body = message,
-            date = career.date,
-            season = career.season,
-            clubId = career.userClubId
-        )
-
-        return career.copy(
-            pendingOffers = career.pendingOffers.map { if (it.id == offerId) updatedOffer else it },
-            news = news.takeLast(120),
-            idCounter = idCounter
-        )
     }
 
     /** Moves the player, moves the money and writes the news. */
@@ -158,6 +349,7 @@ object TransferEngine {
         var idCounter = career.idCounter
         val buyingClub = career.clubOrThrow(offer.toClubId)
         val sellingClubId = player.clubId
+        val makeweight = offer.offerPackage.playerOfferedId?.let { career.player(it) }
 
         val updatedClubs = career.clubs.map { club ->
             when (club.id) {
@@ -171,19 +363,26 @@ object TransferEngine {
         }
 
         val updatedPlayers = career.players.map { p ->
-            if (p.id == player.id) {
-                p.copy(
+            when {
+                p.id == player.id -> p.copy(
                     clubId = offer.toClubId,
                     wagePerWeek = offer.wagePerWeek,
                     contractYearsRemaining = offer.contractYears,
                     signedThisWindow = true,
                     seasonsAtClub = 0,
+                    squadRole = offer.squadRole,
                     moraleScore = (p.moraleScore + 0.4).coerceAtMost(5.0)
                 )
-            } else if (p.clubId == sellingClubId) {
-                // Selling a player unsettles the squad slightly.
-                p.copy(moraleScore = (p.moraleScore - 0.05).coerceAtLeast(1.0))
-            } else p
+                // The makeweight moves the other way as part of the package.
+                makeweight != null && p.id == makeweight.id && sellingClubId != null -> p.copy(
+                    clubId = sellingClubId,
+                    signedThisWindow = true,
+                    seasonsAtClub = 0,
+                    moraleScore = (p.moraleScore + 0.2).coerceAtMost(5.0)
+                )
+                p.clubId == sellingClubId -> p.copy(moraleScore = (p.moraleScore - 0.05).coerceAtLeast(1.0))
+                else -> p
+            }
         }
 
         val ledger = mutableListOf<FinanceLedgerEntry>()
@@ -218,14 +417,16 @@ object TransferEngine {
             body = buildString {
                 append("${buyingClub.name} have completed the signing of ${player.name} ")
                 append("(${player.position.short}, ${player.age}) ")
-                if (offer.fee > 0) {
+                if (offer.offerPackage.hasMakeweight) {
+                    append("in a package worth ${offer.offerPackage.label()} ")
+                } else if (offer.fee > 0) {
                     append("for £${formatMoney(offer.fee)} ")
-                    append("from ${sellingClubId?.let { career.club(it) }?.name ?: "free agency"}. ")
                 } else {
-                    append("on a free transfer. ")
+                    append("on a free transfer ")
                 }
+                append("from ${sellingClubId?.let { career.club(it) }?.name ?: "free agency"}. ")
                 append("He has signed a ${offer.contractYears}-year deal worth ")
-                append("£${formatMoney(offer.wagePerWeek)} per week.")
+                append("£${formatMoney(offer.wagePerWeek)} per week as a ${offer.squadRole.label.lowercase()}.")
             },
             date = career.date,
             season = career.season,
@@ -233,19 +434,25 @@ object TransferEngine {
         )
 
         val isUserTransfer = buyingClub.id == career.userClubId
+        val isUserSale = sellingClubId == career.userClubId
 
         return career.copy(
             clubs = updatedClubs,
             players = updatedPlayers,
             pendingOffers = career.pendingOffers.map {
-                if (it.id == offer.id) it.copy(status = OfferStatus.COMPLETED, message = "Transfer completed") else it
+                if (it.id == offer.id) it.copy(
+                    status = OfferStatus.COMPLETED,
+                    sellingClubResponse = SellingClubResponse.ACCEPT,
+                    playerResponse = PlayerResponse.ACCEPT,
+                    message = "Transfer completed"
+                ) else it
             },
             ledger = (career.ledger + ledger).takeLast(400),
             news = news.takeLast(120),
             idCounter = idCounter,
             transferSpendThisSeason = if (isUserTransfer) career.transferSpendThisSeason + offer.fee
             else career.transferSpendThisSeason,
-            transferIncomeThisSeason = if (sellingClubId == career.userClubId && !isUserTransfer) {
+            transferIncomeThisSeason = if (isUserSale && !isUserTransfer) {
                 career.transferIncomeThisSeason + offer.fee
             } else career.transferIncomeThisSeason
         )
@@ -268,7 +475,8 @@ object TransferEngine {
             askingPrice = fee,
             expectedWage = player.wagePerWeek,
             isUserInitiated = true,
-            createdMatchday = career.matchdayIndex
+            createdMatchday = career.matchdayIndex,
+            offerPackage = TransferPackage(fee = fee)
         )
         val withOffer = career.copy(pendingOffers = career.pendingOffers + offer)
         return completeTransfer(withOffer, offer, player)

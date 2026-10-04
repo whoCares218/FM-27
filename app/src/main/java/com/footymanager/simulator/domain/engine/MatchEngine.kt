@@ -143,8 +143,8 @@ object MatchEngine {
         determinism: Double = 1.0,
         rules: MatchRules = MatchRules.LEAGUE
     ): SimulatedMatch {
-        val homePlayers = TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation)
-        val awayPlayers = TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation)
+        val homePlayers = TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation, home.tactics.playerInstructions)
+        val awayPlayers = TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation, away.tactics.playerInstructions)
 
         val homeStrength = applyMultiplier(
             TeamStrengthCalculator.build(home.clubId, homePlayers, home.reputation),

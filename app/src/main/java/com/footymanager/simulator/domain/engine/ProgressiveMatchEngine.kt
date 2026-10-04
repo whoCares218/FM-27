@@ -124,11 +124,11 @@ class ProgressiveMatchEngine(
 
     init {
         tracker.register(
-            TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation),
+            TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation, home.tactics.playerInstructions),
             isHome = true
         )
         tracker.register(
-            TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation),
+            TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation, away.tactics.playerInstructions),
             isHome = false
         )
         events += MatchEvent(0, MatchEventType.KICK_OFF, home.clubId, detail = "Kick off at ${home.clubName}")
@@ -568,7 +568,7 @@ class ProgressiveMatchEngine(
     }
 
     private fun playersOf(input: MatchTeamInput): List<MatchPlayer> =
-        TeamStrengthCalculator.toMatchPlayers(input.squadById, input.selection, input.tactics.formation)
+        TeamStrengthCalculator.toMatchPlayers(input.squadById, input.selection, input.tactics.formation, input.tactics.playerInstructions)
 
     /** Adds a newly introduced substitute to the rating tracker. */
     private fun registerSubstitute(input: MatchTeamInput, player: Player) {
@@ -1006,11 +1006,11 @@ class ProgressiveMatchEngine(
         windowsUsed.clear()
         windowsUsed += state.windowsUsed
         tracker.register(
-            TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation),
+            TeamStrengthCalculator.toMatchPlayers(home.squadById, home.selection, home.tactics.formation, home.tactics.playerInstructions),
             isHome = true
         )
         tracker.register(
-            TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation),
+            TeamStrengthCalculator.toMatchPlayers(away.squadById, away.selection, away.tactics.formation, away.tactics.playerInstructions),
             isHome = false
         )
         tracker.restore(state.ratings, home.squadById, away.squadById)

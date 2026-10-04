@@ -381,6 +381,66 @@ class GameViewModel(
     fun setTempo(tempo: com.footymanager.simulator.domain.model.Tempo) =
         updateCareer { it.copy(tactics = it.tactics.copy(tempo = tempo)) }
 
+    fun setWidth(width: com.footymanager.simulator.domain.model.Width) =
+        updateCareer { it.copy(tactics = it.tactics.copy(width = width)) }
+
+    fun setPressing(pressing: com.footymanager.simulator.domain.model.Pressing) =
+        updateCareer { it.copy(tactics = it.tactics.copy(pressing = pressing)) }
+
+    fun setPassingStyle(passing: com.footymanager.simulator.domain.model.PassingStyle) =
+        updateCareer { it.copy(tactics = it.tactics.copy(passingStyle = passing)) }
+
+    fun setBuildUp(buildUp: com.footymanager.simulator.domain.model.BuildUp) =
+        updateCareer { it.copy(tactics = it.tactics.copy(buildUp = buildUp)) }
+
+    fun setCounterAttack(counter: com.footymanager.simulator.domain.model.CounterAttack) =
+        updateCareer { it.copy(tactics = it.tactics.copy(counterAttack = counter)) }
+
+    fun setPossessionFocus(focus: com.footymanager.simulator.domain.model.PossessionFocus) =
+        updateCareer { it.copy(tactics = it.tactics.copy(possessionFocus = focus)) }
+
+    fun setCrossing(crossing: com.footymanager.simulator.domain.model.Crossing) =
+        updateCareer { it.copy(tactics = it.tactics.copy(crossing = crossing)) }
+
+    fun setAggression(aggression: com.footymanager.simulator.domain.model.Aggression) =
+        updateCareer { it.copy(tactics = it.tactics.copy(aggression = aggression)) }
+
+    /** Applies a one-tap preset to the team instructions, keeping the formation. */
+    fun applyPreset(preset: com.footymanager.simulator.domain.model.TacticalPreset) {
+        updateCareer { it.copy(tactics = preset.applyTo(it.tactics)) }
+    }
+
+    /** Sets (or clears) an individual instruction for one player. */
+    fun setIndividualInstruction(
+        playerId: Long,
+        instruction: com.footymanager.simulator.domain.model.IndividualInstruction
+    ) {
+        updateCareer { career ->
+            val updated = career.tactics.playerInstructions.toMutableMap()
+            if (instruction == com.footymanager.simulator.domain.model.IndividualInstruction.DEFAULT) {
+                updated.remove(playerId)
+            } else {
+                updated[playerId] = instruction
+            }
+            career.copy(tactics = career.tactics.copy(playerInstructions = updated))
+        }
+    }
+
+    /** Sets the designated set-piece takers, wiring them into the match selection. */
+    fun setSetPieces(takers: com.footymanager.simulator.domain.model.SetPieceTakers) {
+        updateCareer { career ->
+            career.copy(
+                tactics = career.tactics.copy(setPieces = takers),
+                // The engine reads the selection's penalty/free-kick takers, so keep
+                // them in lock-step with the set-piece screen.
+                selection = career.selection.copy(
+                    penaltyTakerId = takers.penaltyTakerId,
+                    freeKickTakerId = takers.freeKickTakerId
+                )
+            )
+        }
+    }
+
     /** Applies a fully-formed tactics object (used by the in-depth editor). */
     fun setTactics(tactics: Tactics) = updateCareer { career ->
         val repaired = SelectionRepair.repair(
@@ -1108,8 +1168,30 @@ class GameViewModel(
     /** Pauses the live match so the manager can make changes without losing time. */
     fun pauseMatch() {
         engineJob?.cancel()
+        // Cancel only signals the loop; the current slice may have already advanced
+        // the engine and mutated the match state without publishing yet. Pull the
+        // authoritative clock/score/stats back out before saving, so the snapshot we
+        // persist matches the engine the resume will rebuild from.
+        syncClockFromEngine()
         _matchDay.value = _matchDay.value?.copy(simulating = false)
         persistSnapshotIfAny()
+    }
+
+    /**
+     * Mirrors the engine's current clock and score into the observable state. The
+     * loop keeps these in step each slice, but a pause can land between an engine
+     * advance and its publish, so the snapshot must re-read the engine directly.
+     */
+    private fun syncClockFromEngine() {
+        val engine = _engine ?: return
+        val matchDay = _matchDay.value ?: return
+        val (hg, ag) = engine.score()
+        _matchDay.value = matchDay.copy(
+            minute = engine.clockMinute,
+            phase = engine.currentPhase,
+            homeGoals = hg,
+            awayGoals = ag
+        )
     }
 
     /** Resumes a paused live match. */
@@ -1118,6 +1200,22 @@ class GameViewModel(
         if (!matchDay.started || matchDay.isPlayed || matchDay.simulating) return
         if (matchDay.awaitingHalfTime || matchDay.awaitingExtraTime) return
         _matchDay.value = matchDay.copy(simulating = true)
+        runEngineLoop()
+    }
+
+    /**
+     * Switches a paused Play Match into compressed Quick Sim for the rest of the
+     * current match — from this exact minute, score, set of cards and
+     * substitutions onward. The engine is not rebuilt, so nothing is lost or
+     * regenerated: only the pacing changes from one-minute slices to whole halves.
+     */
+    fun quickSimFromHere() {
+        val matchDay = _matchDay.value ?: return
+        if (!matchDay.started || matchDay.isPlayed) return
+        // Already running fast, or at a break the manager must action themselves.
+        if (matchDay.awaitingHalfTime || matchDay.awaitingExtraTime) return
+        if (matchDay.mode == MatchMode.QUICK && matchDay.simulating) return
+        _matchDay.value = matchDay.copy(mode = MatchMode.QUICK, simulating = true)
         runEngineLoop()
     }
 
@@ -1320,28 +1418,72 @@ class GameViewModel(
         playSound(SoundCue.CLICK)
         updateCareer { career ->
             val player = career.player(playerId) ?: return@updateCareer career
-            TransferEngine.createUserOffer(career, player, fee, wage, contractYears)
+            TransferEngine.createUserOffer(
+                career = career,
+                player = player,
+                offerPackage = com.footymanager.simulator.domain.model.TransferPackage(fee = fee),
+                terms = com.footymanager.simulator.domain.model.ContractTerms(
+                    wagePerWeek = wage,
+                    contractYears = contractYears
+                )
+            )
         }
+        soundForLatestOffer()
     }
 
-    fun resolveOffer(offerId: Long) {
-        updateCareer { career -> TransferEngine.resolveOffer(career, offerId, rngFor(career)) }
-        // Give the negotiation an audible outcome.
-        when (_career.value?.pendingOffers?.firstOrNull { it.id == offerId }?.status) {
-            OfferStatus.ACCEPTED, OfferStatus.COMPLETED -> playSound(SoundCue.SUCCESS)
+    /** Submits a bid as a package (cash plus an optional makeweight) at once. */
+    fun makeOfferPackage(
+        playerId: Long,
+        offerPackage: com.footymanager.simulator.domain.model.TransferPackage,
+        terms: com.footymanager.simulator.domain.model.ContractTerms
+    ) {
+        playSound(SoundCue.CLICK)
+        updateCareer { career ->
+            val player = career.player(playerId) ?: return@updateCareer career
+            TransferEngine.createUserOffer(career, player, offerPackage, terms)
+        }
+        soundForLatestOffer()
+    }
+
+    /** Accepts the selling club's counter-offer and immediately tries the player. */
+    fun acceptCounter(offerId: Long) {
+        playSound(SoundCue.CLICK)
+        updateCareer { career -> TransferEngine.acceptCounter(career, offerId) }
+        soundForLatestOffer()
+    }
+
+    /** Submits improved personal terms after the player asked for more. */
+    fun submitPlayerTerms(offerId: Long, terms: com.footymanager.simulator.domain.model.ContractTerms) {
+        updateCareer { career -> TransferEngine.submitPlayerTerms(career, offerId, terms) }
+        soundForLatestOffer()
+    }
+
+    /** Cancels a bid at any stage of the negotiation. */
+    fun cancelOffer(offerId: Long) {
+        updateCareer { career -> TransferEngine.cancelOffer(career, offerId) }
+    }
+
+    private fun soundForLatestOffer() {
+        when (_career.value?.pendingOffers?.lastOrNull()?.status) {
+            OfferStatus.COMPLETED, OfferStatus.ACCEPTED -> playSound(SoundCue.SUCCESS)
             OfferStatus.REJECTED, OfferStatus.COLLAPSED -> playSound(SoundCue.FAILURE)
             else -> Unit
         }
     }
 
+    /** The package the selling club would require right now, for the UI. */
+    fun requiredPackageFor(player: Player): com.footymanager.simulator.domain.model.TransferPackage {
+        val career = _career.value ?: return com.footymanager.simulator.domain.model.TransferPackage(player.value)
+        return TransferEngine.requiredPackage(career, player, career.userClubId)
+    }
+
+    fun resolveOffer(offerId: Long) {
+        updateCareer { career -> TransferEngine.resolveOffer(career, offerId, rngFor(career)) }
+        soundForLatestOffer()
+    }
+
     fun withdrawOffer(offerId: Long) {
-        updateCareer { career ->
-            career.copy(
-                pendingOffers = career.pendingOffers.map {
-                    if (it.id == offerId) it.copy(status = OfferStatus.WITHDRAWN, message = "Offer withdrawn") else it
-                }
-            )
-        }
+        updateCareer { career -> TransferEngine.cancelOffer(career, offerId) }
     }
 
     fun sellPlayer(playerId: Long, fee: Long, buyerClubId: Long) {
@@ -1368,8 +1510,11 @@ class GameViewModel(
     }
 
     fun pendingOffers(): List<TransferOffer> =
-        _career.value?.pendingOffers?.filter { it.status == OfferStatus.PENDING || it.status == OfferStatus.REJECTED }
-            ?: emptyList()
+        _career.value?.pendingOffers?.filter {
+            it.status == OfferStatus.PENDING ||
+                it.status == OfferStatus.REJECTED ||
+                it.status == OfferStatus.COUNTERED
+        } ?: emptyList()
 
     // --------------------------------------------------------------- stadium
 

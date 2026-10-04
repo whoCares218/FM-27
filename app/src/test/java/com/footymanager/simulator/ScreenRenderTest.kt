@@ -6,9 +6,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.footymanager.simulator.domain.data.CareerFactory
@@ -97,7 +99,28 @@ class ScreenRenderTest {
         // the outermost scrollable rather than assuming there is only one.
         composeRule.onAllNodes(hasScrollAction())[0]
             .performScrollToNode(hasText(text, substring = true))
-        composeRule.onNodeWithText(text, substring = false).performClick()
+        composeRule.onAllNodes(hasText(text, substring = false)).onLast().performClick()
+    }
+
+    /**
+     * Selects an option inside a labelled section, e.g. the "High Press" option in
+     * the "PLAYING STYLE" selector. Preset chips reuse some option labels, so we
+     * first scroll the section header into view, then click the last visible match
+     * (the real selector sits below the preset row).
+     */
+    private fun selectOption(sectionLabel: String, optionLabel: String) {
+        // The whole "Team instructions" block is a single list item, so scrolling to
+        // its "PLAYING STYLE" header composes both the preset row and the real
+        // selector. The real selector is composed after the preset row, so it is the
+        // last match. Scroll it into view before clicking so the tap lands on it.
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText(sectionLabel, substring = false))
+        composeRule.waitForIdle()
+        composeRule.onAllNodes(hasText(optionLabel, substring = false))
+            .onLast()
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
     }
 
     /**
@@ -153,6 +176,17 @@ class ScreenRenderTest {
                 onSetTempo = { tempo = it },
                 onSetTactics = {},
                 onSetTrainingFocus = {},
+                onApplyPreset = {},
+                onSetWidth = {},
+                onSetPressing = {},
+                onSetPassing = {},
+                onSetBuildUp = {},
+                onSetCounterAttack = {},
+                onSetPossessionFocus = {},
+                onSetCrossing = {},
+                onSetAggression = {},
+                onSetIndividualInstruction = { _, _ -> },
+                onSetSetPieces = {},
                 onAutoPick = {},
                 onAssignSlot = { _, _ -> },
                 onRemoveFromSlot = {},
@@ -167,14 +201,57 @@ class ScreenRenderTest {
         selectFormation(c.tactics.formation.name, Formation.F442.name)
         assertEquals(Formation.F442.id, formationId)
 
-        scrollToAndClick(PlayStyle.HIGH_PRESS.label)
+        selectOption("PLAYING STYLE", PlayStyle.HIGH_PRESS.label)
         assertEquals(PlayStyle.HIGH_PRESS, style)
 
         scrollToAndClick(Tempo.FAST.label)
         assertEquals(Tempo.FAST, tempo)
 
-        scrollToAndClick(Mentality.ATTACKING.label)
+        selectOption("MENTALITY", Mentality.ATTACKING.label)
         assertEquals(Mentality.ATTACKING, mentality)
+    }
+
+    @Test
+    fun `tactics screen is compact with no large gap above the starting XI`() {
+        val c = career()
+        setScreen {
+            TacticsScreen(
+                career = c,
+                onSetFormation = {},
+                onSetMentality = {},
+                onSetStyle = {},
+                onSetDefensiveLine = {},
+                onSetTempo = {},
+                onSetTactics = {},
+                onSetTrainingFocus = {},
+                onApplyPreset = {},
+                onSetWidth = {},
+                onSetPressing = {},
+                onSetPassing = {},
+                onSetBuildUp = {},
+                onSetCounterAttack = {},
+                onSetPossessionFocus = {},
+                onSetCrossing = {},
+                onSetAggression = {},
+                onSetIndividualInstruction = { _, _ -> },
+                onSetSetPieces = {},
+                onAutoPick = {},
+                onAssignSlot = { _, _ -> },
+                onRemoveFromSlot = {},
+                onSwapSlots = { _, _ -> },
+                onSetCaptain = {},
+                onToggleSubstitute = {}
+            )
+        }
+        val formation = composeRule.onNodeWithText("FORMATION", substring = false)
+            .fetchSemanticsNode().boundsInRoot
+        val startingXi = composeRule.onNodeWithText("STARTING XI", substring = false)
+            .fetchSemanticsNode().boundsInRoot
+        val gap = startingXi.top - formation.bottom
+        assertTrue(
+            "The Starting XI header must sit right under the formation block, gap was $gap",
+            gap < 120f
+        )
     }
 
     @Test

@@ -73,6 +73,29 @@ enum class Morale(val label: String, val score: Int) {
     }
 }
 
+/**
+ * The role promised to a player in the squad hierarchy. It shapes both how happy
+ * a player is with their minutes and how much a new signing expects to be paid.
+ */
+@Serializable
+enum class SquadRole(val label: String, val description: String) {
+    STAR("Star Player", "Undisputed first choice and the face of the team"),
+    FIRST_TEAM("First Team", "A regular starter every week"),
+    ROTATION("Rotation", "In and out of the side"),
+    BACKUP("Backup", "Cover for injuries and rotation"),
+    YOUTH("Youth Prospect", "Developing for the future");
+
+    /** Wage expectation multiplier relative to the player's base demand. */
+    val wageMultiplier: Double
+        get() = when (this) {
+            STAR -> 1.28
+            FIRST_TEAM -> 1.10
+            ROTATION -> 1.0
+            BACKUP -> 0.90
+            YOUTH -> 0.80
+        }
+}
+
 @Serializable
 enum class InjuryType(val label: String, val minWeeks: Int, val maxWeeks: Int) {
     NONE("Fit", 0, 0),
@@ -173,7 +196,9 @@ data class Player(
      * Fractional development progress toward the next attribute point. Kept in
      * the save so growth is gradual and cannot be reset by re-loading.
      */
-    val developmentPool: Double = 0.0
+    val developmentPool: Double = 0.0,
+    /** The role the club has promised this player, set when they sign a contract. */
+    val squadRole: SquadRole = SquadRole.ROTATION
 ) {
     val morale: Morale get() = Morale.fromScore(moraleScore)
 

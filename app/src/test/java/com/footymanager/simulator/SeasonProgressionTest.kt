@@ -288,11 +288,16 @@ class SeasonProgressionTest {
 
         val asking = TransferEngine.askingPrice(career, player, player.clubId)
         val wage = TransferEngine.expectedWage(career, player, career.userClubId)
+        val required = TransferEngine.requiredPackage(career, player, career.userClubId)
 
         // A lowball offer should be rejected but leave the deal alive.
-        career = TransferEngine.createUserOffer(career, player, asking / 3, wage / 2, 3)
+        career = TransferEngine.createUserOffer(
+            career,
+            player,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = 1L),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = wage / 2, contractYears = 3)
+        )
         val lowballId = career.pendingOffers.last().id
-        career = TransferEngine.resolveOffer(career, lowballId, Random(1))
         val lowball = career.pendingOffers.first { it.id == lowballId }
         assertEquals(
             com.footymanager.simulator.domain.model.OfferStatus.REJECTED,
@@ -302,9 +307,13 @@ class SeasonProgressionTest {
 
         // A full-price offer should be accepted and move the player.
         val beforeSpend = career.transferSpendThisSeason
-        val finalAsking = TransferEngine.askingPrice(career, player, player.clubId)
         val finalWage = TransferEngine.expectedWage(career, player, career.userClubId)
-        career = TransferEngine.createUserOffer(career, player, finalAsking, finalWage, 3)
+        career = TransferEngine.createUserOffer(
+            career,
+            player,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = required.fee),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = finalWage, contractYears = 3)
+        )
         val fairId = career.pendingOffers.last().id
         career = TransferEngine.resolveOffer(career, fairId, Random(2))
 
@@ -478,7 +487,12 @@ class SeasonProgressionTest {
         assertEquals("Free agents cost no fee", 0L, asking)
 
         val wage = TransferEngine.expectedWage(career, freeAgent, career.userClubId)
-        career = TransferEngine.createUserOffer(career, freeAgent, 0L, wage, 2)
+        career = TransferEngine.createUserOffer(
+            career,
+            freeAgent,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = 0L),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = wage, contractYears = 2)
+        )
         val offerId = career.pendingOffers.last().id
         career = TransferEngine.resolveOffer(career, offerId, Random(4))
         assertEquals(

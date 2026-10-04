@@ -373,6 +373,17 @@ private fun AppNavHost(
                     onSetTempo = { viewModel.setTempo(it) },
                     onSetTactics = { viewModel.setTactics(it) },
                     onSetTrainingFocus = { viewModel.setTrainingFocus(it) },
+                    onApplyPreset = { viewModel.applyPreset(it) },
+                    onSetWidth = { viewModel.setWidth(it) },
+                    onSetPressing = { viewModel.setPressing(it) },
+                    onSetPassing = { viewModel.setPassingStyle(it) },
+                    onSetBuildUp = { viewModel.setBuildUp(it) },
+                    onSetCounterAttack = { viewModel.setCounterAttack(it) },
+                    onSetPossessionFocus = { viewModel.setPossessionFocus(it) },
+                    onSetCrossing = { viewModel.setCrossing(it) },
+                    onSetAggression = { viewModel.setAggression(it) },
+                    onSetIndividualInstruction = { id, inst -> viewModel.setIndividualInstruction(id, inst) },
+                    onSetSetPieces = { viewModel.setSetPieces(it) },
                     onAutoPick = { viewModel.autoPickSelection() },
                     onAssignSlot = { slot, player -> viewModel.assignPlayerToSlot(slot, player) },
                     onRemoveFromSlot = { viewModel.removePlayerFromSlot(it) },
@@ -391,11 +402,13 @@ private fun AppNavHost(
                     onSearch = { query, position -> viewModel.searchTransferMarket(query, position) },
                     onAskingPrice = { viewModel.askingPriceFor(it) },
                     onExpectedWage = { viewModel.expectedWageFor(it) },
-                    onMakeOffer = { playerId, fee, wage, years ->
-                        viewModel.makeOffer(playerId, fee, wage, years)
+                    onRequiredPackage = { viewModel.requiredPackageFor(it) },
+                    onMakeOfferPackage = { playerId, offerPackage, terms ->
+                        viewModel.makeOfferPackage(playerId, offerPackage, terms)
                     },
-                    onResolveOffer = { viewModel.resolveOffer(it) },
-                    onWithdrawOffer = { viewModel.withdrawOffer(it) },
+                    onAcceptCounter = { viewModel.acceptCounter(it) },
+                    onSubmitPlayerTerms = { offerId, terms -> viewModel.submitPlayerTerms(offerId, terms) },
+                    onCancelOffer = { viewModel.cancelOffer(it) },
                     onInterestedBuyers = { viewModel.interestedBuyers(it) },
                     onSell = { playerId, fee, buyerId -> viewModel.sellPlayer(playerId, fee, buyerId) },
                     onRelease = { viewModel.releasePlayer(it) }
@@ -568,6 +581,7 @@ private fun AppNavHost(
                     onContinueExtraTime = { viewModel.continueExtraTime() },
                     onPause = { viewModel.pauseMatch() },
                     onResume = { viewModel.resumeMatch() },
+                    onQuickSimFromHere = { viewModel.quickSimFromHere() },
                     onMakeLiveSub = { off, on -> viewModel.makeLiveSubstitution(off, on) },
                     onPlanSub = { off, on -> viewModel.planSubstitution(off, on) },
                     onCancelSub = { viewModel.cancelSubstitution(it) },

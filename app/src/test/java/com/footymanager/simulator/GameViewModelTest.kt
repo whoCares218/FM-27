@@ -257,13 +257,16 @@ class GameViewModelTest {
         val vm = newViewModel()
         startCareer(vm)
         val target = vm.searchTransferMarket("", null).first()
-        val asking = vm.askingPriceFor(target)
+        val required = vm.requiredPackageFor(target)
         val wage = vm.expectedWageFor(target)
 
-        vm.makeOffer(target.id, asking, wage, 3)
-        awaitIdle { vm.career.value!!.pendingOffers.isNotEmpty() }
-        val offerId = vm.career.value!!.pendingOffers.last().id
-        vm.resolveOffer(offerId)
+        // The bid is evaluated immediately: a full-price package should complete
+        // the signing in a single call, with no waiting for another in-game day.
+        vm.makeOfferPackage(
+            target.id,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = required.fee),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = wage, contractYears = 3)
+        )
         awaitIdle { vm.career.value!!.player(target.id)?.clubId == vm.career.value!!.userClubId }
 
         assertEquals(
@@ -275,14 +278,79 @@ class GameViewModelTest {
     }
 
     @Test
+    fun `a player plus cash package can sign a target`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        val target = vm.searchTransferMarket("", null).first { it.value < 6_000_000L }
+        val required = vm.requiredPackageFor(target)
+        val makeweight = vm.career.value!!.userSquad.maxByOrNull { it.value }!!
+        val cash = (required.fee - makeweight.value).coerceAtLeast(0L)
+        val wage = vm.expectedWageFor(target)
+
+        vm.makeOfferPackage(
+            target.id,
+            com.footymanager.simulator.domain.model.TransferPackage(
+                fee = cash,
+                playerOfferedId = makeweight.id,
+                playerOfferedName = makeweight.name,
+                playerOfferedValue = makeweight.value
+            ),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = wage, contractYears = 3)
+        )
+        // The selling club must respond immediately, never leaving it pending.
+        val offer = vm.career.value!!.pendingOffers.last()
+        assertTrue(
+            "The selling club must respond at once",
+            offer.sellingClubResponse != null
+        )
+    }
+
+    @Test
+    fun `a counter offer is presented immediately`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        val target = vm.searchTransferMarket("", null).first { it.value < 10_000_000L }
+        val required = vm.requiredPackageFor(target)
+        val wage = vm.expectedWageFor(target)
+
+        // A bid around 80% of the valuation should draw a counter, not a wait.
+        vm.makeOfferPackage(
+            target.id,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = (required.fee * 0.80).toLong()),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = wage, contractYears = 3)
+        )
+        val offer = vm.career.value!!.pendingOffers.last()
+        assertEquals(
+            "An 80% bid should trigger a counter-offer",
+            com.footymanager.simulator.domain.model.SellingClubResponse.NEGOTIATE,
+            offer.sellingClubResponse
+        )
+        assertNotNull("A counter package should be shown", offer.counterPackage)
+
+        // Accepting the counter should immediately try the player and complete.
+        vm.acceptCounter(offer.id)
+        awaitIdle { vm.career.value!!.player(target.id)?.clubId == vm.career.value!!.userClubId }
+        assertEquals(
+            "Accepting the counter should complete the signing",
+            vm.career.value!!.userClubId,
+            vm.career.value!!.player(target.id)?.clubId
+        )
+    }
+
+    @Test
     fun `an offer can be withdrawn`() {
         val vm = newViewModel()
         startCareer(vm)
         val target = vm.searchTransferMarket("", null).first()
-        vm.makeOffer(target.id, 1L, 1_000L, 3)
+        // A deliberately inadequate bid so the deal stays open to withdraw.
+        vm.makeOfferPackage(
+            target.id,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = 1L),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = 1_000L, contractYears = 3)
+        )
         awaitIdle { vm.career.value!!.pendingOffers.isNotEmpty() }
         val offerId = vm.career.value!!.pendingOffers.last().id
-        vm.withdrawOffer(offerId)
+        vm.cancelOffer(offerId)
         awaitIdle {
             vm.career.value!!.pendingOffers.first { it.id == offerId }.status == OfferStatus.WITHDRAWN
         }

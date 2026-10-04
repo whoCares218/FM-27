@@ -42,10 +42,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.ContractTerms
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
+import com.footymanager.simulator.domain.model.PlayerResponse
 import com.footymanager.simulator.domain.model.Position
+import com.footymanager.simulator.domain.model.SellingClubResponse
+import com.footymanager.simulator.domain.model.SquadRole
 import com.footymanager.simulator.domain.model.TransferOffer
+import com.footymanager.simulator.domain.model.TransferPackage
 import com.footymanager.simulator.ui.components.ClubCrest
 import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
@@ -71,9 +76,11 @@ fun TransfersScreen(
     onSearch: (String, Position?) -> List<Player>,
     onAskingPrice: (Player) -> Long,
     onExpectedWage: (Player) -> Long,
-    onMakeOffer: (Long, Long, Long, Int) -> Unit,
-    onResolveOffer: (Long) -> Unit,
-    onWithdrawOffer: (Long) -> Unit,
+    onRequiredPackage: (Player) -> TransferPackage,
+    onMakeOfferPackage: (Long, TransferPackage, ContractTerms) -> Unit,
+    onAcceptCounter: (Long) -> Unit,
+    onSubmitPlayerTerms: (Long, ContractTerms) -> Unit,
+    onCancelOffer: (Long) -> Unit,
     onInterestedBuyers: (Long) -> List<Pair<com.footymanager.simulator.domain.model.Club, Long>>,
     onSell: (Long, Long, Long) -> Unit,
     onRelease: (Long) -> Unit
@@ -103,10 +110,13 @@ fun TransfersScreen(
     val shortlisted = remember(shortlist, results) {
         results.filter { it.id in shortlist }.sortedByDescending { it.overall }
     }
-    val pendingOffers = remember(career.pendingOffers) {
+    val activeOffers = remember(career.pendingOffers) {
         career.pendingOffers.filter {
-            it.status == OfferStatus.PENDING || it.status == OfferStatus.REJECTED
-        }.sortedByDescending { it.id }
+            it.status == OfferStatus.COUNTERED ||
+                it.status == OfferStatus.REJECTED ||
+                it.status == OfferStatus.COMPLETED ||
+                it.awaitingPlayer
+        }.sortedByDescending { it.id }.take(6)
     }
     val windowOpen = career.transferWindow.isOpen(career.matchdayIndex)
 
@@ -135,15 +145,16 @@ fun TransfersScreen(
             }
         }
 
-        // ---- Pending offers ----
-        if (pendingOffers.isNotEmpty()) {
-            item { SectionHeader("Your offers") }
-            items(pendingOffers, key = { "offer-${it.id}" }) { offer ->
+        // ---- Active negotiations ----
+        if (activeOffers.isNotEmpty()) {
+            item { SectionHeader("Negotiations") }
+            items(activeOffers, key = { "offer-${it.id}" }) { offer ->
                 OfferCard(
                     offer = offer,
                     career = career,
-                    onResolve = { onResolveOffer(offer.id) },
-                    onWithdraw = { onWithdrawOffer(offer.id) }
+                    onAcceptCounter = { onAcceptCounter(offer.id) },
+                    onSubmitTerms = { terms -> onSubmitPlayerTerms(offer.id, terms) },
+                    onCancel = { onCancelOffer(offer.id) }
                 )
             }
         }
@@ -277,11 +288,11 @@ fun TransfersScreen(
             NegotiationDialog(
                 player = player,
                 career = career,
-                askingPrice = onAskingPrice(player),
+                requiredPackage = onRequiredPackage(player),
                 expectedWage = onExpectedWage(player),
                 onDismiss = { negotiatingPlayerId = null },
-                onSubmit = { fee, wage, years ->
-                    onMakeOffer(playerId, fee, wage, years)
+                onSubmit = { offerPackage, terms ->
+                    onMakeOfferPackage(playerId, offerPackage, terms)
                     negotiatingPlayerId = null
                 }
             )
@@ -438,11 +449,19 @@ private fun OwnPlayerRow(player: Player, onClick: () -> Unit) {
 private fun OfferCard(
     offer: TransferOffer,
     career: Career,
-    onResolve: () -> Unit,
-    onWithdraw: () -> Unit
+    onAcceptCounter: () -> Unit,
+    onSubmitTerms: (ContractTerms) -> Unit,
+    onCancel: () -> Unit
 ) {
-    val accepted = offer.status == OfferStatus.COMPLETED
-    FmCard(accent = if (accepted) StatColors.elite else StatColors.average) {
+    val completed = offer.status == OfferStatus.COMPLETED
+    val rejected = offer.status == OfferStatus.REJECTED
+    val accent = when {
+        completed -> StatColors.elite
+        rejected -> StatColors.bad
+        offer.sellingClubResponse == SellingClubResponse.ACCEPT -> StatColors.good
+        else -> StatColors.average
+    }
+    FmCard(accent = accent) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -455,15 +474,21 @@ private fun OfferCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Your bid: ${Fmt.money(offer.fee)} • Wage offered: ${Fmt.wage(offer.wagePerWeek)}",
+                    text = "Your bid: ${offer.offerPackage.label()} • Wage: ${Fmt.wage(offer.wagePerWeek)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                text = offer.status.name,
+                text = when {
+                    completed -> "COMPLETED"
+                    offer.awaitingPlayer -> "WITH PLAYER"
+                    offer.counterPackage != null -> "COUNTER"
+                    rejected -> "REJECTED"
+                    else -> offer.status.name
+                },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (accepted) StatColors.elite else StatColors.average,
+                color = accent,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -475,18 +500,139 @@ private fun OfferCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+
+        // ---- Selling club counter-offer ----
+        val counter = offer.counterPackage
+        if (counter != null && offer.sellingClubResponse == SellingClubResponse.NEGOTIATE) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "SELLING CLUB COUNTER",
+                style = MaterialTheme.typography.labelSmall,
+                color = StatColors.average,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = counter.label(),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FmPrimaryButton(
+                    text = "Accept counter",
+                    onClick = onAcceptCounter,
+                    modifier = Modifier.weight(1f)
+                )
+                FmSecondaryButton(text = "Cancel", onClick = onCancel, modifier = Modifier.weight(1f))
+            }
+            return@FmCard
+        }
+
+        // ---- Player wants improved terms ----
+        if (offer.awaitingPlayer && offer.playerResponse == PlayerResponse.NEGOTIATE) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "PLAYER WANTS MORE",
+                style = MaterialTheme.typography.labelSmall,
+                color = StatColors.average,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Asking ${Fmt.wage(offer.expectedWage)} per week.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            PlayerTermsEditor(
+                career = career,
+                playerId = offer.playerId,
+                expectedWage = offer.expectedWage,
+                onOffer = onSubmitTerms,
+                onCancel = onCancel
+            )
+            return@FmCard
+        }
+
+        if (!completed && !rejected) {
+            Spacer(Modifier.height(8.dp))
+            FmSecondaryButton(text = "Withdraw", onClick = onCancel)
+        }
+    }
+}
+
+/** Compact editor for the personal terms when a player asks for more. */
+@Composable
+private fun PlayerTermsEditor(
+    career: Career,
+    playerId: Long,
+    expectedWage: Long,
+    onOffer: (ContractTerms) -> Unit,
+    onCancel: () -> Unit
+) {
+    var wageRatio by remember(playerId) { mutableFloatStateOf(1f) }
+    var years by remember(playerId) { mutableFloatStateOf(3f) }
+    var roleIndex by remember(playerId) { mutableStateOf(2) }
+    var bonus by remember(playerId) { mutableFloatStateOf(0f) }
+
+    val role = SquadRole.entries[roleIndex.coerceIn(0, SquadRole.entries.size - 1)]
+    val offeredWage = (expectedWage * (0.9f + wageRatio * 0.5f)).toLong().coerceAtLeast(1_000L)
+    val signingBonus = (offeredWage * 26f * bonus).toLong()
+
+    Column {
+        Text(
+            text = "Wage: ${Fmt.wage(offeredWage)}",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Slider(value = wageRatio, onValueChange = { wageRatio = it }, valueRange = 0f..1f)
+        Text(
+            text = "Contract length: ${years.toInt()} years",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Slider(value = years, onValueChange = { years = it }, valueRange = 1f..5f, steps = 3)
+        Text(
+            text = "Squad role",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(SquadRole.entries.toList(), key = { it.name }) { option ->
+                val idx = SquadRole.entries.indexOf(option)
+                SelectorChip(
+                    label = option.label,
+                    selected = idx == roleIndex,
+                    onClick = { roleIndex = idx }
+                )
+            }
+        }
         Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Signing bonus: ${Fmt.money(signingBonus)}",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Slider(value = bonus, onValueChange = { bonus = it }, valueRange = 0f..1f)
+        Spacer(Modifier.height(8.dp))
+        val budgetOk = career.userClub.transferBudget >= signingBonus
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FmSecondaryButton(
-                text = "Retry offer",
-                onClick = onResolve,
+            FmPrimaryButton(
+                text = if (budgetOk) "Offer terms" else "Over budget",
+                enabled = budgetOk,
+                onClick = {
+                    onOffer(
+                        ContractTerms(
+                            wagePerWeek = offeredWage,
+                            contractYears = years.toInt(),
+                            squadRole = role,
+                            signingBonus = signingBonus
+                        )
+                    )
+                },
                 modifier = Modifier.weight(1f)
             )
-            FmSecondaryButton(
-                text = "Withdraw",
-                onClick = onWithdraw,
-                modifier = Modifier.weight(1f)
-            )
+            FmSecondaryButton(text = "Cancel", onClick = onCancel, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -496,26 +642,43 @@ private fun OfferCard(
 private fun NegotiationDialog(
     player: Player,
     career: Career,
-    askingPrice: Long,
+    requiredPackage: TransferPackage,
     expectedWage: Long,
     onDismiss: () -> Unit,
-    onSubmit: (fee: Long, wage: Long, years: Int) -> Unit
+    onSubmit: (TransferPackage, ContractTerms) -> Unit
 ) {
-    val maxFee = (askingPrice * 1.5f).coerceAtLeast(player.value.toFloat())
-    val minFee = (askingPrice * 0.5f).coerceAtLeast(0f)
+    val requiredFee = requiredPackage.fee
+    val maxFee = (requiredFee * 1.5f).coerceAtLeast(player.value.toFloat())
+    val minFee = (requiredFee * 0.4f).coerceAtLeast(0f)
 
     var feeRatio by remember(player.id) {
         mutableFloatStateOf(
-            if (maxFee > minFee) ((askingPrice - minFee) / (maxFee - minFee)).coerceIn(0f, 1f) else 1f
+            if (maxFee > minFee) ((requiredFee - minFee) / (maxFee - minFee)).coerceIn(0f, 1f) else 1f
         )
     }
     var wageRatio by remember(player.id) { mutableFloatStateOf(1f) }
     var years by remember(player.id) { mutableFloatStateOf(3f) }
+    var roleIndex by remember(player.id) { mutableStateOf(2) }
+    var makeweightId by remember(player.id) { mutableStateOf<Long?>(null) }
 
-    val offeredFee = (minFee + (maxFee - minFee) * feeRatio).toLong()
-    val offeredWage = (expectedWage * (0.6f + wageRatio * 0.7f)).toLong().coerceAtLeast(1_000L)
-    val affordableFee = career.userClub.transferBudget >= offeredFee
-    val canSubmit = affordableFee && offeredFee > 0
+    val offeredCash = (minFee + (maxFee - minFee) * feeRatio).toLong()
+    val makeweight = makeweightId?.let { career.player(it) }
+    val makeweightValue = makeweight?.value ?: 0L
+    val totalValue = offeredCash + makeweightValue
+    val offeredWage = (expectedWage * (0.75f + wageRatio * 0.55f)).toLong().coerceAtLeast(1_000L)
+    val role = SquadRole.entries[roleIndex.coerceIn(0, SquadRole.entries.size - 1)]
+    val affordable = career.userClub.transferBudget >= offeredCash
+    val package_ = TransferPackage(
+        fee = offeredCash,
+        playerOfferedId = makeweight?.id,
+        playerOfferedName = makeweight?.name ?: "",
+        playerOfferedValue = makeweightValue
+    )
+
+    // Candidates the manager could include in a part-exchange deal.
+    val makeweightCandidates = remember(career.userSquad, player.id) {
+        career.userSquad.sortedByDescending { it.value }.take(14)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -533,15 +696,16 @@ private fun NegotiationDialog(
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item {
                     FmCard {
-                        SectionHeader("Their demands")
+                        SectionHeader("Their valuation")
                         Spacer(Modifier.height(6.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            StatCell("Asking price", Fmt.money(askingPrice), valueColor = StatColors.average)
+                            StatCell("Wanted fee", Fmt.money(requiredFee), valueColor = StatColors.average)
                             StatCell("Wage demand", Fmt.wage(expectedWage), valueColor = StatColors.average)
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "A bid within 6% of the asking price is normally accepted.",
+                            text = "They value ${player.name} based on ability, potential, age, " +
+                                "contract length, form and how important he is to their squad.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -549,55 +713,124 @@ private fun NegotiationDialog(
                 }
                 item {
                     FmCard {
-                        SectionHeader("Your offer")
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "Transfer fee: ${Fmt.money(offeredFee)}",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (affordableFee) MaterialTheme.colorScheme.primary else StatColors.bad
-                        )
-                        Slider(
-                            value = feeRatio,
-                            onValueChange = { feeRatio = it },
-                            valueRange = 0f..1f
-                        )
-                        Text(
-                            text = "Wage: ${Fmt.wage(offeredWage)}",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Slider(
-                            value = wageRatio,
-                            onValueChange = { wageRatio = it },
-                            valueRange = 0f..1f
-                        )
-                        Text(
-                            text = "Contract length: ${years.toInt()} years",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Slider(
-                            value = years,
-                            onValueChange = { years = it },
-                            valueRange = 1f..5f,
-                            steps = 3
-                        )
+                        SectionHeader("Bid type")
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "Budget remaining after deal: ${Fmt.money(career.userClub.transferBudget - offeredFee)}",
+                            text = when {
+                                makeweight == null -> "Cash only"
+                                offeredCash > 0 -> "Player + cash"
+                                else -> "Player swap"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                item {
+                    FmCard {
+                        SectionHeader("Cash offer")
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = Fmt.money(offeredCash),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = if (affordable) MaterialTheme.colorScheme.primary else StatColors.bad
+                        )
+                        Slider(value = feeRatio, onValueChange = { feeRatio = it }, valueRange = 0f..1f)
+                        Text(
+                            text = "Budget remaining after fee: ${Fmt.money(career.userClub.transferBudget - offeredCash)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+                item {
+                    FmCard {
+                        SectionHeader("Add a player (player + cash / swap)")
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Including one of your players can lower the cash needed.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item {
+                                SelectorChip(
+                                    label = "None",
+                                    selected = makeweightId == null,
+                                    onClick = { makeweightId = null }
+                                )
+                            }
+                            items(makeweightCandidates, key = { it.id }) { candidate ->
+                                SelectorChip(
+                                    label = "${candidate.name.substringAfterLast(' ')} ${Fmt.money(candidate.value)}",
+                                    selected = makeweightId == candidate.id,
+                                    onClick = { makeweightId = candidate.id }
+                                )
+                            }
+                        }
+                        if (makeweight != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "Package total: ${package_.label()}",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = StatColors.good
+                            )
+                        }
+                    }
+                }
+                item {
+                    FmCard {
+                        SectionHeader("Contract offer")
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Wage: ${Fmt.wage(offeredWage)}",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Slider(value = wageRatio, onValueChange = { wageRatio = it }, valueRange = 0f..1f)
+                        Text(
+                            text = "Contract length: ${years.toInt()} years",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Slider(value = years, onValueChange = { years = it }, valueRange = 1f..5f, steps = 3)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Squad role",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(SquadRole.entries.toList(), key = { it.name }) { option ->
+                                val idx = SquadRole.entries.indexOf(option)
+                                SelectorChip(
+                                    label = option.label,
+                                    selected = idx == roleIndex,
+                                    onClick = { roleIndex = idx }
+                                )
+                            }
+                        }
                     }
                 }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSubmit(offeredFee, offeredWage, years.toInt()) },
-                enabled = canSubmit
+                onClick = {
+                    onSubmit(
+                        package_,
+                        ContractTerms(
+                            wagePerWeek = offeredWage,
+                            contractYears = years.toInt(),
+                            squadRole = role
+                        )
+                    )
+                },
+                enabled = affordable && totalValue > 0
             ) {
-                Text(if (canSubmit) "Submit offer" else "Over budget")
+                Text(if (affordable) "Submit bid" else "Over budget")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

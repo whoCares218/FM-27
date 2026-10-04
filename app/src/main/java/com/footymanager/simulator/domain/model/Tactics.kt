@@ -287,6 +287,174 @@ enum class Aggression(val label: String) {
         }
 }
 
+/** The job a player is asked to do within their role: hold, link or press on. */
+@Serializable
+enum class PlayerDuty(val label: String) {
+    DEFEND("Defend"),
+    SUPPORT("Support"),
+    ATTACK("Attack");
+
+    /** Scales the player's attacking contribution in the engine. */
+    val attackBias: Double
+        get() = when (this) {
+            DEFEND -> 0.82
+            SUPPORT -> 1.0
+            ATTACK -> 1.18
+        }
+
+    /** Scales the player's defensive contribution in the engine. */
+    val defenceBias: Double
+        get() = when (this) {
+            DEFEND -> 1.16
+            SUPPORT -> 1.0
+            ATTACK -> 0.86
+        }
+}
+
+/** How a player is asked to close down, which shifts their pressing effort. */
+@Serializable
+enum class MarkingStyle(val label: String) {
+    ZONAL("Zonal"),
+    MAN("Man-mark");
+
+    val aggressionBias: Double get() = if (this == MAN) 1.10 else 1.0
+}
+
+/**
+ * A per-player instruction that overrides the team default for one individual.
+ * Kept deliberately small so the screen stays usable on a phone.
+ */
+@Serializable
+data class IndividualInstruction(
+    val duty: PlayerDuty = PlayerDuty.SUPPORT,
+    val marking: MarkingStyle = MarkingStyle.ZONAL,
+    /** Push higher up the pitch than the team shape would otherwise ask. */
+    val getForward: Boolean = false,
+    /** Sit and hold position, ignoring the team's attacking intent. */
+    val stayBack: Boolean = false,
+    /** Take on more shots and risky passes. */
+    val takeMoreRisks: Boolean = false
+) {
+    val attackModifier: Double
+        get() = duty.attackBias *
+            (if (getForward) 1.12 else 1.0) *
+            (if (stayBack) 0.84 else 1.0) *
+            (if (takeMoreRisks) 1.06 else 1.0)
+
+    val defenceModifier: Double
+        get() = duty.defenceBias *
+            marking.aggressionBias *
+            (if (stayBack) 1.08 else 1.0) *
+            (if (getForward) 0.94 else 1.0)
+
+    companion object {
+        val DEFAULT = IndividualInstruction()
+    }
+}
+
+/** The designated set-piece takers for the side. */
+@Serializable
+data class SetPieceTakers(
+    val penaltyTakerId: Long? = null,
+    val freeKickTakerId: Long? = null,
+    val cornerTakerId: Long? = null,
+    val longThrowTakerId: Long? = null
+)
+
+/**
+ * A one-tap tactical starting point. Each preset sets every instruction at once,
+ * so a beginner can pick a philosophy and an advanced manager can then tweak it.
+ */
+@Serializable
+enum class TacticalPreset(val label: String, val description: String) {
+    BALANCED("Balanced", "An even approach in and out of possession."),
+    ATTACKING("Attacking", "Push men forward and take the game to the opponent."),
+    DEFENSIVE("Defensive", "Prioritise the clean sheet and stay compact."),
+    COUNTER_ATTACK("Counter Attack", "Absorb pressure and break at pace."),
+    POSSESSION("Possession", "Control the ball and starve the opponent of it."),
+    HIGH_PRESS("High Press", "Win the ball high up the pitch and swarm the carrier."),
+    LOW_BLOCK("Low Block", "Sit deep, deny space and defend the box.");
+
+    /**
+     * Returns [base] with every instruction replaced by this preset's values.
+     * The formation and any individual instructions are preserved, because those
+     * are personal choices rather than part of a philosophy.
+     */
+    fun applyTo(base: Tactics): Tactics = base.copy(
+        mentality = when (this) {
+            BALANCED -> Mentality.BALANCED
+            ATTACKING -> Mentality.ATTACKING
+            DEFENSIVE -> Mentality.DEFENSIVE
+            COUNTER_ATTACK -> Mentality.DEFENSIVE
+            POSSESSION -> Mentality.BALANCED
+            HIGH_PRESS -> Mentality.ATTACKING
+            LOW_BLOCK -> Mentality.VERY_DEFENSIVE
+        },
+        style = when (this) {
+            BALANCED -> PlayStyle.BALANCED
+            ATTACKING -> PlayStyle.BALANCED
+            DEFENSIVE -> PlayStyle.BALANCED
+            COUNTER_ATTACK -> PlayStyle.COUNTER_ATTACK
+            POSSESSION -> PlayStyle.POSSESSION
+            HIGH_PRESS -> PlayStyle.HIGH_PRESS
+            LOW_BLOCK -> PlayStyle.COUNTER_ATTACK
+        },
+        defensiveLine = when (this) {
+            HIGH_PRESS -> DefensiveLine.HIGH
+            LOW_BLOCK -> DefensiveLine.DEEP
+            COUNTER_ATTACK -> DefensiveLine.DEEP
+            else -> DefensiveLine.NORMAL
+        },
+        tempo = when (this) {
+            ATTACKING, HIGH_PRESS, COUNTER_ATTACK -> Tempo.FAST
+            DEFENSIVE, LOW_BLOCK -> Tempo.SLOW
+            else -> Tempo.NORMAL
+        },
+        width = when (this) {
+            ATTACKING, POSSESSION, HIGH_PRESS -> Width.WIDE
+            DEFENSIVE, LOW_BLOCK, COUNTER_ATTACK -> Width.NARROW
+            else -> Width.NORMAL
+        },
+        pressing = when (this) {
+            HIGH_PRESS -> Pressing.VERY_HIGH
+            ATTACKING -> Pressing.HIGH
+            LOW_BLOCK -> Pressing.LOW
+            DEFENSIVE -> Pressing.MEDIUM
+            else -> Pressing.MEDIUM
+        },
+        passingStyle = when (this) {
+            POSSESSION -> PassingStyle.SHORT
+            LOW_BLOCK, COUNTER_ATTACK -> PassingStyle.DIRECT
+            else -> PassingStyle.MIXED
+        },
+        buildUp = when (this) {
+            POSSESSION -> BuildUp.PATIENT
+            COUNTER_ATTACK, HIGH_PRESS -> BuildUp.QUICK
+            else -> BuildUp.BALANCED
+        },
+        counterAttack = when (this) {
+            COUNTER_ATTACK, LOW_BLOCK -> CounterAttack.FREQUENT
+            HIGH_PRESS, ATTACKING -> CounterAttack.OFF
+            else -> CounterAttack.BALANCED
+        },
+        possessionFocus = when (this) {
+            POSSESSION -> PossessionFocus.HIGH
+            COUNTER_ATTACK, LOW_BLOCK -> PossessionFocus.LOW
+            else -> PossessionFocus.MEDIUM
+        },
+        crossing = when (this) {
+            ATTACKING -> Crossing.FREQUENT
+            POSSESSION -> Crossing.RARE
+            else -> Crossing.MIXED
+        },
+        aggression = when (this) {
+            HIGH_PRESS, LOW_BLOCK -> Aggression.HIGH
+            POSSESSION -> Aggression.LOW
+            else -> Aggression.NORMAL
+        }
+    )
+}
+
 @Serializable
 data class Tactics(
     val formationId: String = Formation.F4231.id,
@@ -301,7 +469,11 @@ data class Tactics(
     val counterAttack: CounterAttack = CounterAttack.BALANCED,
     val possessionFocus: PossessionFocus = PossessionFocus.MEDIUM,
     val crossing: Crossing = Crossing.MIXED,
-    val aggression: Aggression = Aggression.NORMAL
+    val aggression: Aggression = Aggression.NORMAL,
+    /** Per-player overrides, keyed by player id. Absent means the default. */
+    val playerInstructions: Map<Long, IndividualInstruction> = emptyMap(),
+    /** Designated set-piece takers. */
+    val setPieces: SetPieceTakers = SetPieceTakers()
 ) {
     val formation: Formation get() = Formation.byId(formationId)
 

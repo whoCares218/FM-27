@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -792,6 +794,105 @@ fun fraction(a: Int, b: Int): Float {
     val total = a + b
     if (total == 0) return 0.5f
     return a.toFloat() / total
+}
+
+/**
+ * A compact, interactive formation pitch.
+ *
+ * Sized to fit a phone without dominating the screen: the height is derived from
+ * the available width via [aspectRatio], so there is no fixed oversized minimum
+ * height and no dead space. Each slot is tappable, which drives the player picker
+ * on the tactics screen, and the selected slot is highlighted.
+ */
+@Composable
+fun FormationPitch(
+    formation: com.footymanager.simulator.domain.model.Formation,
+    playerIds: Map<Int, Long>,
+    playerName: (Long) -> com.footymanager.simulator.domain.model.Player?,
+    selectedSlot: Int?,
+    onSlotClick: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(0.78f)
+            .clip(MaterialTheme.shapes.medium)
+            .background(com.footymanager.simulator.ui.theme.PitchGreen)
+    ) {
+        val w = maxWidth
+        val h = maxHeight
+
+        // Halfway line and centre circle give the turf a recognisable pitch feel.
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth(0.92f)
+                .height(1.dp)
+                .background(Color.White.copy(alpha = 0.22f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .width(w * 0.30f)
+                .height(w * 0.30f)
+                .border(1.dp, Color.White.copy(alpha = 0.20f), CircleShape)
+        )
+
+        formation.coordinates.forEachIndexed { index, point ->
+            val player = playerIds[index]?.let { playerName(it) }
+            val x = ((point.x - 0.5f) * w.value * 0.82f).dp
+            val y = ((0.5f - point.y) * h.value * 0.82f).dp
+            FormationToken(
+                player = player,
+                selected = selectedSlot == index,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = x, y = y)
+                    .clickable { onSlotClick(index) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun FormationToken(
+    player: com.footymanager.simulator.domain.model.Player?,
+    selected: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(
+                    if (player != null) StatColors.forRating(player.overall).copy(alpha = 0.92f)
+                    else Color.White.copy(alpha = 0.25f)
+                )
+                .border(
+                    width = if (selected) 2.5.dp else 1.5.dp,
+                    color = if (selected) Color.White else Color.White.copy(alpha = 0.85f),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = player?.position?.short ?: "+",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF0B1220),
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = player?.name?.substringAfterLast(' ') ?: "Empty",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 /** Rounds a rating to one decimal for display. */

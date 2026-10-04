@@ -19,7 +19,10 @@ data class MatchPlayer(
     /** Fitness-derived multiplier applied to attacking and defensive actions. */
     val conditionFactor: Double,
     /** Morale/form multiplier applied to decisive moments. */
-    val confidenceFactor: Double
+    val confidenceFactor: Double,
+    /** The manager's individual instruction for this player, if any. */
+    val instruction: com.footymanager.simulator.domain.model.IndividualInstruction =
+        com.footymanager.simulator.domain.model.IndividualInstruction.DEFAULT
 ) {
     val id: Long get() = player.id
     val name: String get() = player.name
@@ -36,7 +39,7 @@ data class MatchPlayer(
                 else -> 1.0
             }
             return (a.shooting * 0.5 + a.dribbling * 0.3 + a.pace * 0.2) *
-                roleBias * effectiveAbility / 70.0
+                roleBias * effectiveAbility / 70.0 * instruction.attackModifier
         }
 
     /** Chance creation contribution, used to weight who provides assists. */
@@ -49,7 +52,8 @@ data class MatchPlayer(
                 slot.isDefensive -> 0.60
                 else -> 1.05
             }
-            return (a.passing * 0.6 + a.dribbling * 0.4) * roleBias * effectiveAbility / 70.0
+            return (a.passing * 0.6 + a.dribbling * 0.4) * roleBias * effectiveAbility / 70.0 *
+                instruction.attackModifier
         }
 
     /** Defensive contribution, used to suppress opponent chance quality. */
@@ -62,7 +66,8 @@ data class MatchPlayer(
                 slot.isAttacking -> 0.70
                 else -> 1.0
             }
-            return (a.defending * 0.7 + a.physical * 0.3) * roleBias * effectiveAbility / 70.0
+            return (a.defending * 0.7 + a.physical * 0.3) * roleBias * effectiveAbility / 70.0 *
+                instruction.defenceModifier
         }
 }
 
@@ -141,7 +146,8 @@ object TeamStrengthCalculator {
     fun toMatchPlayers(
         squadById: Map<Long, Player>,
         selection: com.footymanager.simulator.domain.model.TeamSelection,
-        formation: com.footymanager.simulator.domain.model.Formation
+        formation: com.footymanager.simulator.domain.model.Formation,
+        instructions: Map<Long, com.footymanager.simulator.domain.model.IndividualInstruction> = emptyMap()
     ): List<MatchPlayer> {
         val result = mutableListOf<MatchPlayer>()
         for (slot in selection.startingXi) {
@@ -157,7 +163,9 @@ object TeamStrengthCalculator {
                 slot = role,
                 effectiveAbility = effective * emergencyPenalty,
                 conditionFactor = conditionFactor(player.fitness),
-                confidenceFactor = confidenceFactor(player.form, player.moraleScore)
+                confidenceFactor = confidenceFactor(player.form, player.moraleScore),
+                instruction = instructions[player.id]
+                    ?: com.footymanager.simulator.domain.model.IndividualInstruction.DEFAULT
             )
         }
         return result

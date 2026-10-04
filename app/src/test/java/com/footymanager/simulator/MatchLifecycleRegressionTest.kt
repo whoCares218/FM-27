@@ -186,4 +186,82 @@ class MatchLifecycleRegressionTest {
         assertEquals(3, restarted.career.value!!.matchdayIndex)
         assertEquals(onDisk.results.size, restarted.career.value!!.results.size)
     }
+
+    /**
+     * Play Match, pause in the first half, switch to Quick Sim From Here and pin
+     * that the match continues from the same minute with the same score rather
+     * than being restarted or regenerated.
+     */
+    @Test
+    fun `quick sim from here continues the same paused match`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        assertTrue(vm.prepareNextMatch())
+        val fixtureId = vm.matchDay.value!!.match.id
+
+        vm.startMatch(MatchMode.PLAY)
+        awaitIdle { (vm.matchDay.value?.minute ?: 0) >= 3 }
+        vm.pauseMatch()
+        awaitIdle { vm.matchDay.value?.simulating == false }
+
+        val minuteAtPause = vm.matchDay.value!!.minute
+        val homeAtPause = vm.matchDay.value!!.homeGoals
+        val awayAtPause = vm.matchDay.value!!.awayGoals
+        val feedAtPause = vm.matchDay.value!!.feed.size
+
+        vm.quickSimFromHere()
+        awaitIdle { vm.matchDay.value?.awaitingHalfTime == true || vm.matchDay.value?.isPlayed == true }
+
+        val after = vm.matchDay.value!!
+        assertEquals("The fixture must not change", fixtureId, vm.matchDay.value!!.match.id)
+        assertTrue(
+            "Quick Sim From Here must not rewind the clock",
+            after.minute >= minuteAtPause
+        )
+        assertTrue(
+            "Quick Sim From Here must not wipe the event feed",
+            after.feed.size >= feedAtPause
+        )
+        assertTrue("The score must never go backwards", after.homeGoals >= homeAtPause)
+        assertTrue("The score must never go backwards", after.awayGoals >= awayAtPause)
+
+        if (after.awaitingHalfTime) vm.continueSecondHalf()
+        awaitIdle { vm.matchDay.value?.isPlayed == true }
+        assertEquals(fixtureId, vm.matchDay.value!!.match.id)
+    }
+
+    /**
+     * A substitution made while paused must actually change the on-pitch XI and
+     * keep the engine consistent, then survive a resume.
+     */
+    @Test
+    fun `a substitution while paused changes the XI and the match carries on`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        assertTrue(vm.prepareNextMatch())
+        vm.startMatch(MatchMode.PLAY)
+        awaitIdle { (vm.matchDay.value?.minute ?: 0) >= 2 }
+        vm.pauseMatch()
+        awaitIdle { vm.matchDay.value?.simulating == false }
+
+        val xiBefore = vm.liveXi()
+        val off = xiBefore.first()
+        val on = vm.liveBench().first()
+        vm.makeLiveSubstitution(off, on)
+
+        val xiAfter = vm.liveXi()
+        assertFalse("The outgoing player must leave the pitch", off in xiAfter)
+        assertTrue("The incoming player must be on the pitch", on in xiAfter)
+        assertEquals("A substitution must not change the XI count", xiBefore.size, xiAfter.size)
+
+        // Resume briefly: the clock must move on and the substitute must stay on.
+        val minuteAtSub = vm.matchDay.value!!.minute
+        vm.resumeMatch()
+        awaitIdle(timeoutMs = 40_000) { (vm.matchDay.value?.minute ?: 0) > minuteAtSub }
+        vm.pauseMatch()
+        awaitIdle { vm.matchDay.value?.simulating == false }
+        assertTrue("The match must not be finished or restarted", !vm.matchDay.value!!.isPlayed)
+        assertTrue("The substituted-on player must still be on the pitch", on in vm.liveXi())
+        assertFalse("The substituted-off player must not return", off in vm.liveXi())
+    }
 }

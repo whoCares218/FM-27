@@ -214,7 +214,63 @@ data class ManagerRecord(
 }
 
 @Serializable
-enum class OfferStatus { PENDING, ACCEPTED, REJECTED, WITHDRAWN, COMPLETED, COLLAPSED }
+enum class OfferStatus { PENDING, ACCEPTED, REJECTED, WITHDRAWN, COMPLETED, COLLAPSED, COUNTERED }
+
+/** How the selling club answered a bid the instant it was made. */
+@Serializable
+enum class SellingClubResponse(val label: String) {
+    ACCEPT("Accepted"),
+    REJECT("Rejected"),
+    NEGOTIATE("Counter-offer")
+}
+
+/** How the player answered the personal terms the instant they were offered. */
+@Serializable
+enum class PlayerResponse(val label: String) {
+    ACCEPT("Accepted"),
+    NEGOTIATE("Wants more"),
+    REJECT("Rejected")
+}
+
+/**
+ * A bid as a package: a cash sum, plus optionally one of the buyer's own players
+ * offered in part exchange. The selling club evaluates the combined value, so a
+ * lower cash bid can still succeed if the makeweight is good enough.
+ */
+@Serializable
+data class TransferPackage(
+    val fee: Long = 0L,
+    val playerOfferedId: Long? = null,
+    val playerOfferedName: String = "",
+    val playerOfferedValue: Long = 0L
+) {
+    /** Combined headline value the selling club reasons about. */
+    val totalValue: Long get() = fee + playerOfferedValue
+
+    val hasMakeweight: Boolean get() = playerOfferedId != null && playerOfferedValue > 0
+
+    fun label(): String = when {
+        hasMakeweight && fee > 0 -> "$playerOfferedName + ${formatMoneyShort(fee)}"
+        hasMakeweight -> playerOfferedName
+        else -> formatMoneyShort(fee)
+    }
+
+    private fun formatMoneyShort(amount: Long): String = when {
+        kotlin.math.abs(amount) >= 1_000_000 -> "£%.1fM".format(amount / 1_000_000.0)
+        kotlin.math.abs(amount) >= 1_000 -> "£%,dK".format(amount / 1_000)
+        else -> "£$amount"
+    }
+}
+
+/** The personal terms a player is being offered. */
+@Serializable
+data class ContractTerms(
+    val wagePerWeek: Long,
+    val contractYears: Int = 3,
+    val squadRole: SquadRole = SquadRole.ROTATION,
+    val signingBonus: Long = 0L,
+    val releaseClause: Long = 0L
+)
 
 /** A transfer negotiation, kept deliberately lightweight for mobile play. */
 @Serializable
@@ -235,8 +291,27 @@ data class TransferOffer(
     val isUserInitiated: Boolean,
     val isLoan: Boolean = false,
     val createdMatchday: Int = 1,
-    val message: String = ""
-)
+    val message: String = "",
+    /** The user's bid as a package (cash + any makeweight). */
+    val offerPackage: TransferPackage = TransferPackage(fee = fee),
+    /** When the selling club counters, the package it wants instead. */
+    val counterPackage: TransferPackage? = null,
+    /** The selling club's immediate verdict on the current bid. */
+    val sellingClubResponse: SellingClubResponse? = null,
+    /** The player's immediate verdict on the personal terms. */
+    val playerResponse: PlayerResponse? = null,
+    /** The squad role promised to the player. */
+    val squadRole: SquadRole = SquadRole.ROTATION,
+    val signingBonus: Long = 0L,
+    val releaseClause: Long = 0L
+) {
+    /** True once the selling club has accepted and the deal is with the player. */
+    val sellingClubAgreed: Boolean
+        get() = status == OfferStatus.ACCEPTED || sellingClubResponse == SellingClubResponse.ACCEPT
+
+    val awaitingPlayer: Boolean
+        get() = sellingClubAgreed && status == OfferStatus.ACCEPTED
+}
 
 @Serializable
 data class SeasonSummary(
