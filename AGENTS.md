@@ -86,6 +86,25 @@ leagues the same size, or give each league its own matchday count.
   absolute `< 50` / `> 50` threshold. Late dismissals cannot flip a bar that is
   anchored to possession. The test samples seeds to find a sending-off.
 
+## Curated squads & live tactics (added 2026-10-01)
+
+- `domain/data/CuratedSquads.kt` holds hand-authored, legally-safe squads (fictionalised
+  names) for a curated subset of clubs. `CuratedSquadBuilder` turns each design into a
+  `Player` using the shared attribute logic in `PlayerGenerator` (`buildAttributes` +
+  position offsets + `overallFor`), so an authored player's `overall` always matches the
+  attributes it was given. `CareerFactory` wires the designs in by club name and calls
+  `topUp` with generated cover so every club still fields a full squad.
+- Do not hand-write an `overall` for a curated player: derive it with
+  `PlayerGenerator.overallFor(position, attributes)` or `CuratedSquadAndLiveTacticsTest`
+  will fail.
+- Live tactics: `GameViewModel.applyLiveTactics` writes the career copy (so it persists)
+  *and* pushes the change into the running `ProgressiveMatchEngine` via
+  `activeHome`/`activeAway`. `liveTactics()` reads back what the engine is actually
+  using — use it in tests rather than `career.tactics` when asserting mid-match state.
+- `TacticsScreen` puts formation in an `FmDropdown` at the top and the XI in a compact
+  `LineupGrid` (role-tagged rows), not the old pitch-token `TacticalBoard`. `ScreenRenderTest`
+  opens the dropdown to change formation; keep the selected formation's name tappable.
+
 ## Versioning
 
 - `versionCode` / `versionName` live in `app/build.gradle.kts`. Tag test builds as

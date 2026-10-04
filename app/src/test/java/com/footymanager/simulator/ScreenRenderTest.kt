@@ -100,6 +100,17 @@ class ScreenRenderTest {
         composeRule.onNodeWithText(text, substring = false).performClick()
     }
 
+    /**
+     * Selects a formation from the dropdown at the top of the tactics screen: the
+     * currently-selected formation is tapped to open the menu, then the target is
+     * tapped. Returns once the selection callback should have fired.
+     */
+    private fun selectFormation(currentName: String, optionName: String) {
+        composeRule.onNodeWithText(currentName, substring = false).performClick()
+        composeRule.onNodeWithText(optionName, substring = false).performClick()
+        composeRule.waitForIdle()
+    }
+
     @Test
     fun `home screen renders a new career`() {
         val c = career()
@@ -152,7 +163,8 @@ class ScreenRenderTest {
         }
         composeRule.onRoot().assertExists()
 
-        scrollToAndClick(Formation.F442.name)
+        // Formation is a dropdown at the top of the screen now.
+        selectFormation(c.tactics.formation.name, Formation.F442.name)
         assertEquals(Formation.F442.id, formationId)
 
         scrollToAndClick(PlayStyle.HIGH_PRESS.label)

@@ -65,10 +65,12 @@ import com.footymanager.simulator.domain.model.PlayStyle
 import com.footymanager.simulator.domain.model.PossessionFocus
 import com.footymanager.simulator.domain.model.Pressing
 import com.footymanager.simulator.domain.model.Tactics
+import com.footymanager.simulator.domain.model.TeamSelection
 import com.footymanager.simulator.domain.model.Tempo
 import com.footymanager.simulator.domain.model.TrainingFocus
 import com.footymanager.simulator.domain.model.Width
 import com.footymanager.simulator.ui.components.FmCard
+import com.footymanager.simulator.ui.components.FmDropdown
 import com.footymanager.simulator.ui.components.FmPrimaryButton
 import com.footymanager.simulator.ui.components.FmSecondaryButton
 import com.footymanager.simulator.ui.components.FitnessBar
@@ -116,57 +118,35 @@ fun TacticsScreen(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // ---- Formation ----
+        // ---- Formation (top of the screen, as a dropdown) ----
         item {
             FmCard {
-                SectionHeader("Formation")
-                Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(Formation.all, key = { it.id }) { option ->
-                        val selected = option.id == formation.id
-                        Column(
-                            modifier = Modifier
-                                .clip(MaterialTheme.shapes.extraSmall)
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .clickable { onSetFormation(option.id) }
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = option.name,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary
-                                else MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = option.description,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = formation.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                FmDropdown(
+                    label = "Formation",
+                    options = Formation.all,
+                    selected = formation,
+                    onSelect = { onSetFormation(it.id) },
+                    optionLabel = { it.name },
+                    optionSupporting = { it.description }
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FormationStat("Defenders", formation.defenderCount)
+                    FormationStat("Midfielders", formation.midfielderCount)
+                    FormationStat("Attackers", formation.attackerCount)
+                }
             }
         }
 
         // ---- Warnings ----
         if (warnings.isNotEmpty()) {
             item {
-                FmCard(accent = StatColors.poor) {
+                FmCard(accent = StatColors.poor, padding = 10.dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Outlined.Warning,
@@ -181,7 +161,7 @@ fun TacticsScreen(
                             color = StatColors.poor
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(4.dp))
                     warnings.forEach { warning ->
                         Text(
                             text = "• $warning",
@@ -193,7 +173,7 @@ fun TacticsScreen(
             }
         }
 
-        // ---- Pitch ----
+        // ---- Starting XI, directly below the formation ----
         item {
             FmCard(padding = 10.dp) {
                 Row(
@@ -203,30 +183,23 @@ fun TacticsScreen(
                 ) {
                     SectionHeader("Starting XI")
                     Text(
-                        text = "Tap a position to change it",
+                        text = "Tap a player to change",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                TacticalBoard(
+                LineupGrid(
                     formation = formation,
                     selection = career.selection,
                     byId = byId,
                     captainId = career.selection.captainId,
-                    onSlotClick = { pickerSlot = it },
-                    onSwapSlots = onSwapSlots
+                    onSlotClick = { pickerSlot = it }
                 )
-            }
-        }
-
-        // ---- Selection actions ----
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Spacer(Modifier.height(10.dp))
                 FmSecondaryButton(
                     text = "Auto-pick best XI",
-                    onClick = onAutoPick,
-                    modifier = Modifier.weight(1f)
+                    onClick = onAutoPick
                 )
             }
         }
@@ -515,235 +488,146 @@ private fun AdvancedInstructionsCard(tactics: Tactics, onApply: (Tactics) -> Uni
 }
 
 /**
- * The interactive tactical board.
+ * A compact, grid-based starting XI.
  *
- * Every token is draggable: dragging one token onto another swaps the two
- * players, and dragging a token into empty space nudges it to a nearby slot.
- * A single tap opens the picker for that position. The board shows each player's
- * rating, condition and role, and highlights anyone playing out of position.
- *
- * The gesture model is deliberately simple: on release we find the slot nearest
- * the token's centre and treat that as the drop target. This works reliably for
- * thumbs on a phone without needing precise hit-testing during the drag.
+ * Each formation slot is rendered as a tidy row rather than a pitch token: role
+ * tag, player name, rating, condition and the captain marker. Tapping a row opens
+ * the picker for that slot. This keeps the XI legible on a phone, never overflows
+ * at large font scales, and sits directly beneath the formation selector.
  */
 @Composable
-private fun TacticalBoard(
+private fun LineupGrid(
     formation: Formation,
-    selection: com.footymanager.simulator.domain.model.TeamSelection,
+    selection: TeamSelection,
     byId: Map<Long, Player>,
     captainId: Long?,
-    onSlotClick: (Int) -> Unit,
-    onSwapSlots: (Int, Int) -> Unit
+    onSlotClick: (Int) -> Unit
 ) {
-    val slots = remember(formation) {
-        formation.coordinates.mapIndexed { index, point -> index to point }
-    }
-    var draggingIndex by remember { mutableStateOf<Int?>(null) }
-    var dragOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    var hoverTarget by remember { mutableStateOf<Int?>(null) }
-
-    BoxWithConstraints(
+    val slotsByIndex = selection.startingXi.associateBy { it.slotIndex }
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.72f)
-            .clip(MaterialTheme.shapes.medium)
-            .background(com.footymanager.simulator.ui.theme.PitchGreen)
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        val w = maxWidth.value
-        val h = maxHeight.value
-
-        // Pitch markings for a tactical-board look.
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth(0.90f)
-                .height(1.dp)
-                .background(Color.White.copy(alpha = 0.22f))
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(64.dp)
-                .border(1.dp, Color.White.copy(alpha = 0.20f), CircleShape)
-        )
-        // Penalty boxes at each end.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth(0.46f)
-                .height(h.dp * 0.14f)
-                .border(1.dp, Color.White.copy(alpha = 0.18f))
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(0.46f)
-                .height(h.dp * 0.14f)
-                .border(1.dp, Color.White.copy(alpha = 0.18f))
-        )
-
-        slots.forEach { (index, point) ->
-            val slot = selection.startingXi.firstOrNull { it.slotIndex == index }
+        formation.roles.forEachIndexed { index, role ->
+            val slot = slotsByIndex[index]
             val player = slot?.let { byId[it.playerId] }
-            val baseX = (point.x * w)
-            // Flip so the attacking line sits at the top of the screen.
-            val baseY = ((1f - point.y) * h)
-            val isDragging = draggingIndex == index
-            val isTarget = hoverTarget == index && draggingIndex != index
-
-            TacticalToken(
-                role = formation.roles[index],
+            val outOfPosition = slot?.outOfPosition ?: false
+            LineupRow(
+                role = role,
                 player = player,
-                outOfPosition = slot?.outOfPosition == true,
-                isCaptain = player?.id == captainId,
-                isDragging = isDragging,
-                isDropTarget = isTarget,
-                modifier = Modifier
-                    .offset(
-                        x = (baseX - 30f).dp + (if (isDragging) dragOffset.x.dp else 0.dp),
-                        y = (baseY - 34f).dp + (if (isDragging) dragOffset.y.dp else 0.dp)
-                    )
-                    .zIndex(if (isDragging) 2f else 1f)
-                    .pointerInput(index) {
-                        detectDragGestures(
-                            onDragStart = {
-                                draggingIndex = index
-                                dragOffset = androidx.compose.ui.geometry.Offset.Zero
-                            },
-                            onDrag = { change, amount ->
-                                change.consume()
-                                dragOffset += amount
-                                hoverTarget = nearestSlot(
-                                    baseX + dragOffset.x, baseY + dragOffset.y, slots, w, h
-                                ).takeIf { it != index }
-                            },
-                            onDragEnd = {
-                                val target = hoverTarget
-                                if (target != null) onSwapSlots(index, target)
-                                draggingIndex = null
-                                dragOffset = androidx.compose.ui.geometry.Offset.Zero
-                                hoverTarget = null
-                            },
-                            onDragCancel = {
-                                draggingIndex = null
-                                dragOffset = androidx.compose.ui.geometry.Offset.Zero
-                                hoverTarget = null
-                            }
-                        )
-                    }
-                    .clickable { onSlotClick(index) }
+                outOfPosition = outOfPosition,
+                isCaptain = player != null && player.id == captainId,
+                onClick = { onSlotClick(index) }
             )
         }
     }
 }
 
-/** Finds the slot whose pitch position is closest to a screen point. */
-private fun nearestSlot(
-    x: Float,
-    y: Float,
-    slots: List<Pair<Int, com.footymanager.simulator.domain.model.PitchPoint>>,
-    width: Float,
-    height: Float
-): Int? {
-    if (slots.isEmpty()) return null
-    return slots.minByOrNull { (_, point) ->
-        val sx = point.x * width
-        val sy = (1f - point.y) * height
-        val dx = sx - x
-        val dy = sy - y
-        dx * dx + dy * dy
-    }?.first
-}
-
-/**
- * A single player token on the tactical board. The circular badge shows the
- * player's overall rating coloured by quality; the role tag, condition and
- * out-of-position flag sit beneath it.
- */
 @Composable
-private fun TacticalToken(
+private fun LineupRow(
     role: com.footymanager.simulator.domain.model.SlotRole,
     player: Player?,
     outOfPosition: Boolean,
     isCaptain: Boolean,
-    isDragging: Boolean,
-    isDropTarget: Boolean,
-    modifier: Modifier = Modifier
+    onClick: () -> Unit
 ) {
-    val scale by animateFloatAsState(
-        targetValue = if (isDragging) 1.12f else 1f,
-        animationSpec = tween(120),
-        label = "tokenScale"
-    )
-    val ringColor = when {
-        isDropTarget -> StatColors.elite
-        outOfPosition -> StatColors.poor
-        player != null -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-    }
-
-    Column(
-        modifier = modifier
-            .width(60.dp)
-            .scale(scale),
-        horizontalAlignment = Alignment.CenterHorizontally
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraSmall)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(contentAlignment = Alignment.TopEnd) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (player != null) StatColors.forRating(player.overall).copy(alpha = 0.92f)
-                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.30f)
-                    )
-                    .border(
-                        width = if (isDropTarget || outOfPosition) 2.dp else 1.5.dp,
-                        color = ringColor,
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = player?.overall?.toString() ?: "+",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF0B1220)
+        Box(
+            modifier = Modifier
+                .width(42.dp)
+                .clip(MaterialTheme.shapes.extraSmall)
+                .background(
+                    if (outOfPosition) StatColors.poor.copy(alpha = 0.22f)
+                    else MaterialTheme.colorScheme.surfaceContainer
                 )
+                .padding(vertical = 3.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = role.short,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (outOfPosition) StatColors.poor else MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = player?.name ?: "Empty",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (player != null) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (isCaptain) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Filled.Star,
+                        contentDescription = "Captain",
+                        tint = StatColors.elite,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
             }
-            if (isCaptain) {
-                Icon(
-                    Icons.Filled.Star,
-                    contentDescription = "Captain",
-                    tint = StatColors.elite,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .offset(x = 2.dp, y = (-2).dp)
+            if (player != null) {
+                Text(
+                    text = "${role.longName} · ${player.fitness}% condition",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (outOfPosition) StatColors.poor
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.width(6.dp))
+        if (player != null) {
+            RatingBadge(player.overall, size = 30.dp)
+        } else {
+            Text(
+                text = "+",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** A single summary figure under the formation selector. */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.FormationStat(label: String, value: Int) {
+    Column(modifier = Modifier.weight(1f)) {
         Text(
-            text = player?.name?.substringAfterLast(' ') ?: role.short,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center
+            text = value.toString(),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold
         )
         Text(
-            text = if (player != null) {
-                "${role.short} · ${player.fitness}%"
-            } else role.longName,
+            text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = if (outOfPosition) StatColors.poor
-            else Color.White.copy(alpha = 0.78f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
     }
 }
+
 
 @Composable
 private fun BenchRow(player: Player, onRemove: () -> Unit) {

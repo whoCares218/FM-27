@@ -43,12 +43,32 @@ object CareerFactory {
 
         val players = mutableListOf<Player>()
         for (club in clubs) {
-            players += PlayerGenerator.generateSquad(
-                club = club,
-                random = random,
-                idProvider = idProvider,
-                difficulty = request.difficulty.aiStrength
-            )
+            val curated = CuratedSquads.byClubName[club.name]
+            players += if (curated != null) {
+                // A hand-authored squad, topped up with generated cover so the
+                // club always has a full 24 to pick from.
+                val authored = CuratedSquadBuilder.build(
+                    club = club,
+                    designs = curated,
+                    random = random,
+                    idProvider = idProvider,
+                    difficulty = request.difficulty.aiStrength
+                )
+                CuratedSquadBuilder.topUp(
+                    club = club,
+                    curated = authored,
+                    template = PlayerGenerator.squadTemplate,
+                    random = random,
+                    idProvider = idProvider
+                )
+            } else {
+                PlayerGenerator.generateSquad(
+                    club = club,
+                    random = random,
+                    idProvider = idProvider,
+                    difficulty = request.difficulty.aiStrength
+                )
+            }
         }
 
         val fixtures = mutableListOf<com.footymanager.simulator.domain.model.Match>()

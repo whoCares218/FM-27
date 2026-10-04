@@ -976,6 +976,17 @@ class GameViewModel(
     /** The bench still available, for the live substitution screen. */
     fun liveBench(): List<Long> = _liveBench
 
+    /**
+     * The tactics the live engine is actually using right now, which is the
+     * authoritative set for a paused match (the career copy is written in step,
+     * but the engine may hold a repaired selection the career does not yet).
+     */
+    fun liveTactics(): Tactics {
+        val engine = _engine ?: return _career.value?.tactics ?: Tactics.DEFAULT
+        val userIsHome = _matchDay.value?.let { it.match.homeClubId == _career.value?.userClubId } ?: true
+        return engine.activeInput(userIsHome).tactics
+    }
+
     /** Builds the user's current team input, optionally overriding their XI. */
     private fun buildUserInput(
         career: Career,
