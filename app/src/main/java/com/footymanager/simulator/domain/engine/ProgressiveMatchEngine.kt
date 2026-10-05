@@ -426,15 +426,24 @@ class ProgressiveMatchEngine(
             homeAdvantage = false
         )
 
+        // In the second half (and extra time) the scoreline shapes how each side
+        // plays: the team chasing the game commits forward, the leader manages it.
+        // The same behaviour is applied in the fast engine, so a Quick Sim and a
+        // Play Match of the same fixture produce comparable score distributions.
+        val hState = secondHalfStateFactor(homeGoals, awayGoals)
+        val aState = secondHalfStateFactor(awayGoals, homeGoals)
+        val hXgAdjusted = hXgPer90 * hState
+        val aXgAdjusted = aXgPer90 * aState
+
         val hFatigue = conditionFactorOf(hInput)
         val aFatigue = conditionFactorOf(aInput)
 
         // ---- Shots ----
         val hShotsNow = MatchEngine.poisson(
-            (hXgPer90 / 90.0) * 7.4 * hInput.tactics.chanceVolumeMultiplier, rng
+            (hXgAdjusted / 90.0) * 7.4 * hInput.tactics.chanceVolumeMultiplier, rng
         )
         val aShotsNow = MatchEngine.poisson(
-            (aXgPer90 / 90.0) * 7.4 * aInput.tactics.chanceVolumeMultiplier, rng
+            (aXgAdjusted / 90.0) * 7.4 * aInput.tactics.chanceVolumeMultiplier, rng
         )
         homeShots += hShotsNow
         awayShots += aShotsNow
@@ -442,8 +451,8 @@ class ProgressiveMatchEngine(
         awayOnTarget += MatchEngine.poisson(aShotsNow * 0.36, rng)
 
         // ---- Goals ----
-        val hGoalsNow = rollGoals((hXgPer90 / 90.0) * hFatigue)
-        val aGoalsNow = rollGoals((aXgPer90 / 90.0) * aFatigue)
+        val hGoalsNow = rollGoals((hXgAdjusted / 90.0) * hFatigue)
+        val aGoalsNow = rollGoals((aXgAdjusted / 90.0) * aFatigue)
         repeat(hGoalsNow) {
             homeGoals++
             if (isExtraTime) homeEtGoals++ else homeGoalsRegular++
@@ -511,8 +520,8 @@ class ProgressiveMatchEngine(
         // ---- Dangerous attacks ----
         // Entries into the final third scale with attacking intent, tempo, the
         // quality gap and the possession share, so they track what a viewer sees.
-        val hThreat = hXgPer90 / 90.0 * hInput.tactics.chanceVolumeMultiplier
-        val aThreat = aXgPer90 / 90.0 * aInput.tactics.chanceVolumeMultiplier
+        val hThreat = hXgAdjusted / 90.0 * hInput.tactics.chanceVolumeMultiplier
+        val aThreat = aXgAdjusted / 90.0 * aInput.tactics.chanceVolumeMultiplier
         homeDangerous += MatchEngine.poisson(0.45 * hThreat * (hPossession / 50.0) + 0.05, rng)
         awayDangerous += MatchEngine.poisson(0.45 * aThreat * (aPossession / 50.0) + 0.05, rng)
 
@@ -639,6 +648,20 @@ class ProgressiveMatchEngine(
             p *= rng.nextDouble()
         } while (p > limit && k < 6)
         return k - 1
+    }
+
+    /**
+     * Scoreline feedback for the second half: the side chasing the game pushes
+     * forward (raising its chance rate) while the side in front manages it
+     * (lowering its own). Capped so it shapes the distribution without swamping
+     * the underlying quality model.
+     */
+    private fun secondHalfStateFactor(ownGoals: Int, opponentGoals: Int): Double {
+        if (phase == MatchPhase.FIRST_HALF) return 1.0
+        val margin = ownGoals - opponentGoals
+        val chasing = (-margin).coerceIn(0, 3) * 0.15
+        val leading = margin.coerceIn(0, 3) * 0.13
+        return (1.0 + chasing - leading).coerceIn(0.72, 1.45)
     }
 
     /** Fitness at kick-off scales how well a side converts its chances. */

@@ -132,7 +132,7 @@ object MatchEngine {
     private const val HOME_ADVANTAGE = 0.34
 
     /** Average goals per team per match in the model, before any modifiers. */
-    private const val BASE_XG = 1.32
+    private const val BASE_XG = 1.16
 
     fun simulate(
         home: MatchTeamInput,
@@ -178,8 +178,20 @@ object MatchEngine {
             homeAdvantage = false
         )
 
-        val homeGoals = drawGoals(homeXg, random, determinism)
-        val awayGoals = drawGoals(awayXg, random, determinism)
+        // Goals are drawn per half rather than as one flat Poisson draw. The break
+        // is a natural point to let the scoreline shape the rest of the game: a
+        // side that is behind commits more players forward and creates more (while
+        // exposing itself), a comfortable leader manages the match and creates
+        // less. That feedback, plus a small quality edge for the side in front, is
+        // what produces realistic, autocorrelated football instead of independent
+        // 90-minute goal counts.
+        val homeFirstHalf = drawGoals(homeXg / 2.0, random, determinism)
+        val awayFirstHalf = drawGoals(awayXg / 2.0, random, determinism)
+
+        val homeSecondRate = secondHalfRate(homeXg, homeFirstHalf, awayFirstHalf)
+        val awaySecondRate = secondHalfRate(awayXg, awayFirstHalf, homeFirstHalf)
+        val homeGoals = homeFirstHalf + drawGoals(homeSecondRate, random, determinism)
+        val awayGoals = awayFirstHalf + drawGoals(awaySecondRate, random, determinism)
 
         val ratingsTracker = RatingTracker()
         ratingsTracker.register(homePlayers, isHome = true)
@@ -596,8 +608,10 @@ object MatchEngine {
     ): Double {
         val defensiveResistance = opponentDefence * 0.72 + opponentKeeper * 0.28
         val ratio = (attack.coerceAtLeast(20.0)) / defensiveResistance.coerceAtLeast(20.0)
-        // Elasticity < 1 keeps the scorelines realistic for large quality gaps.
-        val qualityFactor = ratio.pow(1.55)
+        // Elasticity below 1 compresses the gap between a strong attack and a weak
+        // defence, so a mismatch inflates the expected goals without letting a
+        // routine league game turn into a cricket score.
+        val qualityFactor = ratio.pow(1.32)
 
         var xg = BASE_XG * qualityFactor
         xg *= tactics.mentality.attackModifier
@@ -610,7 +624,33 @@ object MatchEngine {
 
         if (homeAdvantage) xg *= (1.0 + HOME_ADVANTAGE * 0.35)
 
-        return xg.coerceIn(0.18, 4.6)
+        // Cap the per-team expectation so no single fixture can run away with the
+        // score even when a top side meets a struggling one.
+        return xg.coerceIn(0.18, 3.0)
+    }
+
+    /**
+     * The expected-goals rate for one side's second half, adjusted for the
+     * half-time scoreline.
+     *
+     * A chasing side raises its rate (chasing) while the leader eases off
+     * (managing the game); the leading side still keeps a small edge because the
+     * better team is usually the one in front. The effect is capped so it shifts
+     * the shape of the distribution without dominating the underlying quality
+     * model.
+     */
+    internal fun secondHalfRate(
+        baseXg: Double,
+        ownFirstHalfGoals: Int,
+        opponentFirstHalfGoals: Int
+    ): Double {
+        val margin = ownFirstHalfGoals - opponentFirstHalfGoals
+        // Chasing raises the rate but tapers: a side three down does not keep
+        // doubling its threat, and a rout is damped rather than compounded.
+        val chasing = (-margin).coerceIn(0, 3) * 0.15
+        val leading = margin.coerceIn(0, 3) * 0.13
+        val factor = (1.0 + chasing - leading).coerceIn(0.72, 1.45)
+        return (baseXg / 2.0) * factor
     }
 
     /**

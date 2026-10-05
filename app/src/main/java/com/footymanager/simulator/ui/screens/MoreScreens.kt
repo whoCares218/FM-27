@@ -1457,10 +1457,11 @@ fun HowToPlayScreen(onBack: () -> Unit) {
                 "position on the pitch to pick a player. Players out of position perform " +
                 "worse, so keep an eye on the warning panel.",
             "Playing matches" to
-                "Tap Play Match on the Home screen for the full match-day experience, or " +
-                "Quick Sim to jump straight to the result. Matches are simulated from " +
-                "player ability, tactics, fitness, form, morale, home advantage and " +
-                "randomness.",
+                "Tap Play Match on the Home screen for the full match-day experience, " +
+                "Quick Sim Match to compress one match into seconds, or Simulate to Date " +
+                "to fast-forward the whole football world to a future calendar date. " +
+                "Matches are simulated from player ability, tactics, fitness, form, " +
+                "morale, home advantage and randomness.",
             "Training" to
                 "Set a weekly training focus. Attack, Defence, Fitness and Possession " +
                 "direct which attributes improve. Young players grow fastest with regular " +

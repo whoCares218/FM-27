@@ -304,7 +304,7 @@ private fun PreMatchView(
             // The primary control lives in the top-right header. Here we only offer
             // a gentle hint so the manager knows where to start the match.
             Text(
-                text = "Use START MATCH or QUICK SIM at the top right to begin.",
+                text = "Use START MATCH or QUICK SIM MATCH at the top right to begin.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth(),
@@ -1666,7 +1666,7 @@ private fun MatchHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        if (matchDay.mode == MatchMode.QUICK) InfoPill("Quick Sim")
+        if (matchDay.mode == MatchMode.QUICK) InfoPill("Quick Sim Match")
         Spacer(Modifier.width(6.dp))
         control()
     }
@@ -1700,7 +1700,7 @@ private fun MatchTopControl(
         !matchDay.started -> {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ControlChip(
-                    text = "QUICK SIM",
+                    text = "QUICK SIM MATCH",
                     primary = false,
                     onClick = { onStart(MatchMode.QUICK) }
                 )

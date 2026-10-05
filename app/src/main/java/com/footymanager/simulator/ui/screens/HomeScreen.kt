@@ -202,7 +202,7 @@ fun HomeScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 FmSecondaryButton(
-                    text = "Quick Sim",
+                    text = "Quick Sim Match",
                     onClick = onQuickSim,
                     icon = Icons.Outlined.FastForward
                 )
