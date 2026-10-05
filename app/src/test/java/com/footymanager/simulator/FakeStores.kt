@@ -57,4 +57,10 @@ class FakeSettingsStore : SettingsStore {
     override suspend fun setDarkTheme(enabled: Boolean) = state.update { it.copy(darkTheme = enabled) }
 
     override suspend fun setDifficulty(difficulty: Difficulty) = state.update { it.copy(difficulty = difficulty) }
+
+    override suspend fun setMusic(enabled: Boolean) = state.update { it.copy(musicEnabled = enabled) }
+
+    override suspend fun setSoundVolume(volume: Float) = state.update { it.copy(soundVolume = volume) }
+
+    override suspend fun setMusicVolume(volume: Float) = state.update { it.copy(musicVolume = volume) }
 }

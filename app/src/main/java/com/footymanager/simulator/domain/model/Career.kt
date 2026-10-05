@@ -108,7 +108,15 @@ data class Career(
      * Outstanding transfer-fee amortisation, one charge per signing. The sum is
      * what feeds the squad-cost ratio alongside the wage bill.
      */
-    val amortisationBook: List<AmortisationCharge> = emptyList()
+    val amortisationBook: List<AmortisationCharge> = emptyList(),
+    /**
+     * The manager's transfer desk: a durable history of every negotiation, live
+     * or settled, on both the buy and sell sides. Persisted with the career so
+     * the history survives restarts, save/load and season turnover.
+     */
+    val negotiations: List<NegotiationRecord> = emptyList(),
+    /** Completed transfers involving the manager's club, for the history view. */
+    val transferHistory: List<TransferHistoryEntry> = emptyList()
 ) {
     /** Outstanding transfer-fee amortisation carried this season, per week. */
     val weeklyAmortisation: Long

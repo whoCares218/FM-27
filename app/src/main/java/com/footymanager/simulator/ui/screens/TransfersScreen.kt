@@ -1,7 +1,10 @@
 package com.footymanager.simulator.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,14 +70,15 @@ import com.footymanager.simulator.ui.components.StatCell
 import com.footymanager.simulator.ui.theme.StatColors
 
 /**
- * The transfer hub, split into two complete management systems.
+ * The transfer hub, split into three complete management systems.
  *
  * BUY is the market: search, filter, inspect, negotiate and sign players.
  * SELL is the manager's own auction: list a player, set an asking price, watch
- * clubs bid, and negotiate until a deal is agreed. Keeping the two apart stops
- * either from feeling like an afterthought.
+ * clubs bid, and negotiate until a deal is agreed.
+ * NEGOTIATIONS is the transfer desk: a persistent inbox of every negotiation,
+ * live or settled, with a full timeline for each.
  */
-enum class TransferTab(val label: String) { BUY("Buy"), SELL("Sell") }
+enum class TransferTab(val label: String) { BUY("Buy"), SELL("Sell"), NEGOTIATIONS("Negotiations") }
 
 @Composable
 fun TransfersScreen(
@@ -95,6 +100,9 @@ fun TransfersScreen(
     onCancelSale: () -> Unit,
     onRelease: (Long) -> Unit,
     onPlayersForClub: (Long) -> List<Player> = { emptyList() },
+    onOpenNegotiation: (Long) -> Unit = {},
+    onMarkAllNegotiationsRead: () -> Unit = {},
+    onOpenHistory: () -> Unit = {},
     /** Tab to open first. A profile "sell" request opens SELL directly. */
     initialTab: TransferTab = TransferTab.BUY,
     /** A squad player to open the SELL listing dialog for, if any. */
@@ -117,65 +125,139 @@ fun TransfersScreen(
         }
     }
 
+    val unreadCount = remember(career.negotiations) { career.negotiations.count { it.unread } }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        // ---- BUY | SELL selector ----
+        // ---- BUY | SELL | NEGOTIATIONS selector ----
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             TransferTab.entries.forEach { option ->
                 val selected = tab == option
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(MaterialTheme.shapes.small)
-                        .background(
-                            if (selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .clickable { tab = option }
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = option.label.uppercase(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                val badge = when (option) {
+                    TransferTab.NEGOTIATIONS -> unreadCount.takeIf { it > 0 }
+                    else -> null
                 }
+                TransferTabButton(
+                    label = option.label,
+                    selected = selected,
+                    badge = badge,
+                    onClick = { tab = option },
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 
-        when (tab) {
-            TransferTab.BUY -> BuySection(
-                career = career,
-                onSearch = onSearch,
-                onAskingPrice = onAskingPrice,
-                onExpectedWage = onExpectedWage,
-                onRequiredPackage = onRequiredPackage,
-                onMakeOfferPackage = onMakeOfferPackage,
-                onAcceptCounter = onAcceptCounter,
-                onSubmitPlayerTerms = onSubmitPlayerTerms,
-                onCancelOffer = onCancelOffer,
-                onPlayersForClub = onPlayersForClub
-            )
-            TransferTab.SELL -> SellSection(
-                career = career,
-                onListPlayer = onListPlayer,
-                onSetAskingPrice = onSetAskingPrice,
-                onInterestedCount = onInterestedCount,
-                onCounterSaleBid = onCounterSaleBid,
-                onAcceptSaleBid = onAcceptSaleBid,
-                onRejectSaleBid = onRejectSaleBid,
-                onCancelSale = onCancelSale,
-                onRelease = onRelease,
-                preselectPlayerId = pendingPlayerId,
-                onPreselectConsumed = { pendingPlayerId = null }
-            )
+        androidx.compose.animation.AnimatedContent(
+            targetState = tab,
+            transitionSpec = {
+                androidx.compose.animation.fadeIn(
+                    androidx.compose.animation.core.tween(200)
+                ) togetherWith androidx.compose.animation.fadeOut(
+                    androidx.compose.animation.core.tween(150)
+                )
+            },
+            label = "transferTabContent"
+        ) { active ->
+            when (active) {
+                TransferTab.BUY -> BuySection(
+                    career = career,
+                    onSearch = onSearch,
+                    onAskingPrice = onAskingPrice,
+                    onExpectedWage = onExpectedWage,
+                    onRequiredPackage = onRequiredPackage,
+                    onMakeOfferPackage = onMakeOfferPackage,
+                    onAcceptCounter = onAcceptCounter,
+                    onSubmitPlayerTerms = onSubmitPlayerTerms,
+                    onCancelOffer = onCancelOffer,
+                    onPlayersForClub = onPlayersForClub
+                )
+                TransferTab.SELL -> SellSection(
+                    career = career,
+                    onListPlayer = onListPlayer,
+                    onSetAskingPrice = onSetAskingPrice,
+                    onInterestedCount = onInterestedCount,
+                    onCounterSaleBid = onCounterSaleBid,
+                    onAcceptSaleBid = onAcceptSaleBid,
+                    onRejectSaleBid = onRejectSaleBid,
+                    onCancelSale = onCancelSale,
+                    onRelease = onRelease,
+                    preselectPlayerId = pendingPlayerId,
+                    onPreselectConsumed = { pendingPlayerId = null }
+                )
+                TransferTab.NEGOTIATIONS -> NegotiationsSection(
+                    career = career,
+                    onOpen = onOpenNegotiation,
+                    onMarkAllRead = onMarkAllNegotiationsRead
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A transfer tab button with a pressed scale and a smooth selected-state colour,
+ * plus an unread badge on the Negotiations tab.
+ */
+@Composable
+private fun TransferTabButton(
+    label: String,
+    selected: Boolean,
+    badge: Int?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(110),
+        label = "tabPress"
+    )
+    val bg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.surfaceVariant,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "tabBg"
+    )
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(MaterialTheme.shapes.small)
+            .background(bg)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(vertical = 11.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label.uppercase(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (badge != null) {
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 2.dp, end = 6.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(StatColors.bad)
+                    .size(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (badge > 9) "9+" else "$badge",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }

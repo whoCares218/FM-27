@@ -42,6 +42,8 @@ import com.footymanager.simulator.ui.navigation.Routes
 import com.footymanager.simulator.ui.screens.AboutDialog
 import com.footymanager.simulator.ui.screens.BoardScreen
 import com.footymanager.simulator.ui.screens.ClubProfileScreen
+import com.footymanager.simulator.ui.screens.NegotiationDetailScreen
+import com.footymanager.simulator.ui.screens.TransferHistoryScreen
 import com.footymanager.simulator.ui.screens.CompetitionHubScreen
 import com.footymanager.simulator.ui.screens.FinancesScreen
 import com.footymanager.simulator.ui.screens.FixturesScreen
@@ -82,6 +84,31 @@ fun FootballManagerApp(viewModel: GameViewModel) {
         val navController = rememberNavController()
         val snackbarHostState = remember { SnackbarHostState() }
         var showAbout by remember { mutableStateOf(false) }
+
+        // Keep the background music running while the app is in the foreground,
+        // and stop it cleanly when the user leaves so it never plays in the
+        // background or fights another app for audio focus. The player's setting
+        // is re-asserted on every start, so turning music off stays off.
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        androidx.compose.runtime.DisposableEffect(lifecycleOwner, settings.musicEnabled) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                when (event) {
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                        viewModel.music.enabled = settings.musicEnabled
+                        viewModel.music.volume = settings.musicVolume
+                        viewModel.startMusic()
+                    }
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> viewModel.stopMusic()
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            // The composable is currently resumed; make sure music is running.
+            viewModel.music.enabled = settings.musicEnabled
+            viewModel.music.volume = settings.musicVolume
+            viewModel.startMusic()
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
 
         LaunchedEffect(message) {
             message?.let {
@@ -367,6 +394,33 @@ private fun AppNavHost(
             }
         }
 
+        composable(
+            route = Routes.NEGOTIATION_DETAIL,
+            arguments = listOf(navArgument("negotiationId") { type = NavType.LongType })
+        ) { entry ->
+            val negotiationId = entry.arguments?.getLong("negotiationId") ?: return@composable
+            val current = career ?: return@composable
+            val record = viewModel.negotiationById(negotiationId)
+            if (record != null) {
+                NegotiationDetailScreen(
+                    career = current,
+                    record = record,
+                    onBack = { navController.popBackStack() }
+                )
+            } else {
+                navController.popBackStack()
+            }
+        }
+
+        composable(Routes.TRANSFER_HISTORY) {
+            val current = career ?: return@composable
+            TransferHistoryScreen(
+                career = current,
+                onBack = { navController.popBackStack() },
+                onOpenPlayer = { id -> navController.navigate(Routes.playerDetail(id)) }
+            )
+        }
+
         // ------------------------------------------------------- tactics
         composable(Routes.TACTICS) {
             if (career != null) {
@@ -425,6 +479,12 @@ private fun AppNavHost(
                     onCancelSale = { viewModel.cancelSale() },
                     onRelease = { viewModel.releasePlayer(it) },
                     onPlayersForClub = { clubId -> viewModel.playersForClub(clubId) },
+                    onOpenNegotiation = { id ->
+                        viewModel.markNegotiationRead(id)
+                        navController.navigate(Routes.negotiationDetail(id))
+                    },
+                    onMarkAllNegotiationsRead = { viewModel.markAllNegotiationsRead() },
+                    onOpenHistory = { navController.navigate(Routes.TRANSFER_HISTORY) },
                     initialTab = if (sellTarget != null) TransferTab.SELL else TransferTab.BUY,
                     preselectPlayerId = sellTarget,
                     onConsumePreselect = { viewModel.consumeSellTarget() }
@@ -559,6 +619,9 @@ private fun AppNavHost(
                 onSetDarkTheme = { viewModel.setDarkTheme(it) },
                 onSetDifficulty = { viewModel.setDifficulty(it) },
                 onSetAnimationSpeed = { viewModel.setAnimationSpeed(it) },
+                onSetMusic = { viewModel.setMusic(it) },
+                onSetSoundVolume = { viewModel.setSoundVolume(it) },
+                onSetMusicVolume = { viewModel.setMusicVolume(it) },
                 onResetCareer = {
                     viewModel.resetCareer()
                     navController.navigate(Routes.MAIN_MENU) {

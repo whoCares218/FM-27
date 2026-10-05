@@ -149,3 +149,32 @@ leagues the same size, or give each league its own matchday count.
   world's squads drain to free agents within a few seasons and wage bills collapse to zero.
 - The multi-season economy is bounded (10-season test): money does not explode, does not
   become permanently impossible, and richer clubs stay stronger.
+
+## Transfer desk, audio & negotiation history (added 2026-10-05)
+
+- The Transfers hub has three tabs: BUY | SELL | NEGOTIATIONS. NEGOTIATIONS is the
+  persistent transfer desk (`NegotiationsScreen.kt`); tapping a card opens
+  `NegotiationDetailScreen.kt`, and `TransferHistoryScreen.kt` lists completed deals.
+  Routes live in `Routes.kt` (NEGOTIATION, NEGOTIATION_DETAIL, TRANSFER_HISTORY).
+- `domain/model/Negotiation.kt` defines `NegotiationRecord` with a full event timeline,
+  plus `NegotiationSide/Status/Outcome`. Records live in `Career.negotiations` and are
+  saved by the same atomic write as everything else, so they survive restarts and season
+  turnover (`SeasonEngine` uses `copy`, preserving both new fields).
+- `domain/engine/NegotiationEngine` derives records from `Career.pendingOffers` and
+  `Career.pendingSale` in `GameViewModel.updateCareer`. Dedupe is by `sourceKey`:
+  `buy:<playerId>:<fromClubId>` on the buy side (so re-bidding appends, never duplicates)
+  and `sell:<saleId>:<clubId>` on the sell side. Terminal sell/complete moments sync the
+  source object explicitly *before* it is cleared (`acceptSaleBid`, `cancelSale`).
+- ID allocation bug to remember: `NegotiationEngine.upsert` must derive a new record's id
+  from the ids already in the running list, not just `career.idCounter`, or two records
+  created in one sync collide. Covered by `NegotiationTest`.
+- Audio: `MusicEngine` synthesises an original, copyright-safe pad (no assets) on a
+  daemon thread; `SoundManager` wraps `ToneGenerator`. `MusicEngine.enabled` is a
+  setter that starts/stops immediately, and `FootballManagerApp` drives start/stop from
+  the lifecycle (`ON_START`/`ON_STOP`), re-asserting the settings on start so "music off"
+  stays off across navigation.
+- Settings: `GameSettings` carries `musicEnabled`, `soundVolume`, `musicVolume`; the
+  Audio card in `SettingsScreen` exposes toggles + sliders. All persist via DataStore.
+- Tests: `NegotiationTest` covers create/counter/no-duplicate/complete/reject/withdraw +
+  save-load; `ScreenRenderTest` renders the desk, detail and history screens.
+

@@ -34,6 +34,8 @@ import com.footymanager.simulator.ui.screens.HowToPlayScreen
 import com.footymanager.simulator.ui.screens.LeagueScreen
 import com.footymanager.simulator.ui.screens.NewCareerScreen
 import com.footymanager.simulator.ui.screens.NewsScreen
+import com.footymanager.simulator.ui.screens.NegotiationDetailScreen
+import com.footymanager.simulator.ui.screens.NegotiationsSection
 import com.footymanager.simulator.ui.screens.PlayerDetailScreen
 import com.footymanager.simulator.ui.screens.SeasonSummaryScreen
 import com.footymanager.simulator.ui.screens.SettingsScreen
@@ -41,6 +43,7 @@ import com.footymanager.simulator.ui.screens.SquadScreen
 import com.footymanager.simulator.ui.screens.StatisticsScreen
 import com.footymanager.simulator.ui.screens.TacticsScreen
 import com.footymanager.simulator.ui.screens.TrainingScreen
+import com.footymanager.simulator.ui.screens.TransferHistoryScreen
 import com.footymanager.simulator.ui.screens.TransfersScreen
 import com.footymanager.simulator.ui.screens.TransferTab
 import com.footymanager.simulator.ui.screens.MatchDayScreen
@@ -627,6 +630,7 @@ class ScreenRenderTest {
         }
         composeRule.onNodeWithText("BUY", substring = false).assertExists()
         composeRule.onNodeWithText("SELL", substring = false).assertExists()
+        composeRule.onNodeWithText("NEGOTIATIONS", substring = false).assertExists()
         // The League -> Team browse must be present in the BUY section. Its header
         // is uppercased by SectionHeader, so match on that form.
         composeRule.onAllNodes(hasScrollAction())[0]
@@ -690,5 +694,66 @@ class ScreenRenderTest {
             )
         }
         composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun `the negotiation desk renders its header and buckets`() {
+        val c = career()
+        setScreen {
+            NegotiationsSection(
+                career = c,
+                onOpen = {},
+                onMarkAllRead = {},
+                onOpenHistory = {}
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onNodeWithText("TRANSFER DESK", substring = false).assertExists()
+    }
+
+    @Test
+    fun `the negotiation detail screen renders a timeline`() {
+        val c = career()
+        val target = com.footymanager.simulator.domain.engine.TransferEngine.marketPlayers(c).first()
+        val required = com.footymanager.simulator.domain.engine.TransferEngine.requiredPackage(c, target, c.userClubId)
+        val wage = com.footymanager.simulator.domain.engine.TransferEngine.expectedWage(c, target, c.userClubId)
+        val withOffer = com.footymanager.simulator.domain.engine.TransferEngine.createUserOffer(
+            c,
+            target,
+            com.footymanager.simulator.domain.model.TransferPackage(fee = (required.fee * 0.80).toLong()),
+            com.footymanager.simulator.domain.model.ContractTerms(wagePerWeek = wage, contractYears = 3)
+        )
+        val synced = com.footymanager.simulator.domain.engine.NegotiationEngine.syncBuy(withOffer)
+        val record = synced.negotiations.first { it.playerId == target.id }
+        var backPressed = false
+        setScreen {
+            NegotiationDetailScreen(
+                career = synced,
+                record = record,
+                onBack = { backPressed = true }
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onNodeWithText(target.name, substring = true).assertExists()
+        composeRule.onNodeWithText("Negotiation", substring = false).assertExists()
+    }
+
+    @Test
+    fun `the transfer history screen renders a completed deal`() {
+        val c = career()
+        val player = c.userSquad.maxByOrNull { it.value }!!
+        val fee = player.value * 2
+        val buyer = c.clubs.first { it.id != c.userClubId }
+        val sold = com.footymanager.simulator.domain.engine.TransferEngine.sellPlayer(c, player.id, fee, buyer.id)
+        setScreen {
+            TransferHistoryScreen(
+                career = sold,
+                onBack = {},
+                onOpenPlayer = {}
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onNodeWithText("Transfer history", substring = false).assertExists()
+        composeRule.onNodeWithText(player.name, substring = true).assertExists()
     }
 }

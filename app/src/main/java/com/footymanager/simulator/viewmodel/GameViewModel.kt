@@ -14,6 +14,7 @@ import com.footymanager.simulator.domain.data.SettingsStore
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
 import com.footymanager.simulator.domain.engine.AiManager
 import com.footymanager.simulator.domain.engine.FinanceEngine
+import com.footymanager.simulator.domain.engine.NegotiationEngine
 import com.footymanager.simulator.domain.engine.MatchPhase
 import com.footymanager.simulator.domain.engine.MatchRules
 import com.footymanager.simulator.domain.engine.MatchTeamInput
@@ -41,6 +42,8 @@ import com.footymanager.simulator.domain.model.MatchModePersist
 import com.footymanager.simulator.domain.model.MatchPhasePersist
 import com.footymanager.simulator.domain.model.InProgressMatchState
 import com.footymanager.simulator.domain.model.MatchdayFinance
+import com.footymanager.simulator.domain.model.NegotiationRecord
+import com.footymanager.simulator.domain.model.NegotiationOutcome
 import com.footymanager.simulator.domain.model.OfferStatus
 import com.footymanager.simulator.domain.model.Player
 import com.footymanager.simulator.domain.model.PositionChange
@@ -51,7 +54,9 @@ import com.footymanager.simulator.domain.model.TeamMatchStats
 import com.footymanager.simulator.domain.model.TeamSelection
 import com.footymanager.simulator.domain.model.TrainingFocus
 import com.footymanager.simulator.domain.model.TransferListing
+import com.footymanager.simulator.domain.model.TransferHistoryEntry
 import com.footymanager.simulator.domain.model.TransferOffer
+import com.footymanager.simulator.ui.sound.MusicEngine
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.sound.SoundManager
 import kotlinx.coroutines.CoroutineScope
@@ -239,6 +244,9 @@ class GameViewModel(
     /** Lightweight synthesised sound effects, gated by the player's setting. */
     val sound = SoundManager()
 
+    /** Original, procedurally generated background music. */
+    val music = MusicEngine()
+
     /** Reward state of the current career, for the rewarded-ad card. */
     val adRewards: StateFlow<com.footymanager.simulator.domain.model.AdRewardState?>
         get() = _adRewards.asStateFlow()
@@ -283,6 +291,9 @@ class GameViewModel(
             settingsRepository.settings.collect {
                 _settings.value = it
                 sound.enabled = it.soundEnabled
+                sound.volume = it.soundVolume
+                music.enabled = it.musicEnabled
+                music.volume = it.musicVolume
             }
         }
         viewModelScope.launch {
@@ -369,15 +380,31 @@ class GameViewModel(
     fun setDarkTheme(enabled: Boolean) = viewModelScope.launch { settingsRepository.setDarkTheme(enabled) }
     fun setDifficulty(difficulty: Difficulty) = viewModelScope.launch { settingsRepository.setDifficulty(difficulty) }
     fun setAnimationSpeed(speed: AnimationSpeed) = viewModelScope.launch { settingsRepository.setAnimationSpeed(speed) }
+    fun setMusic(enabled: Boolean) = viewModelScope.launch { settingsRepository.setMusic(enabled) }
+    fun setSoundVolume(volume: Float) = viewModelScope.launch { settingsRepository.setSoundVolume(volume) }
+    fun setMusicVolume(volume: Float) = viewModelScope.launch { settingsRepository.setMusicVolume(volume) }
+
+    /** Starts the background music if the player has it enabled. */
+    fun startMusic() {
+        if (_settings.value.musicEnabled) music.start()
+    }
+
+    /** Stops the background music cleanly. */
+    fun stopMusic() = music.stop()
 
     /** Plays a UI cue through the shared sound manager. */
     fun playSound(cue: SoundCue) {
         when (cue) {
             SoundCue.CLICK -> sound.click()
+            SoundCue.CONFIRM -> sound.confirm()
+            SoundCue.CANCEL -> sound.cancel()
             SoundCue.SUCCESS -> sound.success()
             SoundCue.FAILURE -> sound.failure()
             SoundCue.GOAL -> sound.goal()
             SoundCue.WHISTLE -> sound.whistle()
+            SoundCue.TRANSFER -> sound.transfer()
+            SoundCue.SELECT -> sound.select()
+            SoundCue.WARNING -> sound.warning()
         }
     }
 
@@ -1516,7 +1543,8 @@ class GameViewModel(
 
     private fun soundForLatestOffer() {
         when (_career.value?.pendingOffers?.lastOrNull()?.status) {
-            OfferStatus.COMPLETED, OfferStatus.ACCEPTED -> playSound(SoundCue.SUCCESS)
+            OfferStatus.COMPLETED -> playSound(SoundCue.TRANSFER)
+            OfferStatus.ACCEPTED -> playSound(SoundCue.SUCCESS)
             OfferStatus.REJECTED, OfferStatus.COLLAPSED -> playSound(SoundCue.FAILURE)
             else -> Unit
         }
@@ -1614,7 +1642,9 @@ class GameViewModel(
     fun counterSaleBid(clubId: Long, amount: Long) {
         playSound(SoundCue.CLICK)
         val career = _career.value ?: return
-        updateCareer { c -> TransferEngine.counterSaleBid(c, clubId, amount, rngFor(c)) }
+        updateCareer(managerCounters = mapOf(clubId to amount)) { c ->
+            TransferEngine.counterSaleBid(c, clubId, amount, rngFor(c))
+        }
         when (_career.value?.pendingSale?.acceptedBid) {
             null -> Unit
             else -> playSound(SoundCue.SUCCESS)
@@ -1623,8 +1653,28 @@ class GameViewModel(
 
     /** Accepts a club's bid and completes the sale at once. */
     fun acceptSaleBid(clubId: Long) {
-        playSound(SoundCue.SUCCESS)
-        updateCareer { c -> TransferEngine.acceptSaleBid(c, clubId) }
+        val career = _career.value ?: return
+        val before = career.pendingSale
+        val after = TransferEngine.acceptSaleBid(career, clubId)
+        // The sale object is cleared by the engine once the deal completes, so
+        // reconstruct the terminal state and feed it to the desk explicitly.
+        val completed = before?.let { sale ->
+            sale.copy(
+                status = com.footymanager.simulator.domain.model.SaleStatus.COMPLETED,
+                bids = sale.bids.map { bid ->
+                    when {
+                        bid.clubId == clubId -> bid.copy(status = com.footymanager.simulator.domain.model.BidStatus.ACCEPTED)
+                        bid.isLive -> bid.copy(status = com.footymanager.simulator.domain.model.BidStatus.REJECTED)
+                        else -> bid
+                    }
+                }
+            )
+        }
+        var updated = NegotiationEngine.syncBuy(after)
+        if (completed != null) updated = NegotiationEngine.syncSell(updated, completed)
+        _career.value = updated
+        persist(updated)
+        playSound(SoundCue.TRANSFER)
     }
 
     /** Rejects one club's bid. */
@@ -1636,8 +1686,49 @@ class GameViewModel(
     /** Abandons the sale and clears the listing. */
     fun cancelSale() {
         val career = _career.value ?: return
-        updateCareer { c -> TransferEngine.cancelSale(c) }
+        val sale = career.pendingSale
+        var updated = TransferEngine.cancelSale(career)
+        if (sale != null) updated = NegotiationEngine.withdrawSaleRecords(updated, sale)
+        updated = NegotiationEngine.syncBuy(updated)
+        _career.value = updated
+        persist(updated)
+        playSound(SoundCue.CANCEL)
     }
+
+    // -------------------------------------------------------------- negotiations
+
+    /** Every negotiation on the manager's desk, newest first. */
+    fun negotiations(): List<NegotiationRecord> =
+        _career.value?.negotiations.orEmpty().sortedByDescending { it.id }
+
+    fun negotiationById(id: Long): NegotiationRecord? =
+        _career.value?.negotiations?.firstOrNull { it.id == id }
+
+    /** Marks a negotiation as read; opening its page clears the unread dot. */
+    fun markNegotiationRead(id: Long) {
+        val career = _career.value ?: return
+        if (career.negotiations.none { it.id == id && it.unread }) return
+        val updated = NegotiationEngine.markRead(career, id)
+        _career.value = updated
+        persist(updated)
+    }
+
+    fun markAllNegotiationsRead() {
+        val career = _career.value ?: return
+        if (career.negotiations.none { it.unread }) return
+        val updated = NegotiationEngine.markAllRead(career)
+        _career.value = updated
+        persist(updated)
+    }
+
+    fun unreadNegotiationCount(): Int = _career.value?.negotiations?.count { it.unread } ?: 0
+
+    fun negotiationCount(outcome: NegotiationOutcome): Int =
+        _career.value?.let { NegotiationEngine.countOutcome(it, outcome) } ?: 0
+
+    /** Completed transfers involving the manager's club, newest first. */
+    fun transferHistory(): List<TransferHistoryEntry> =
+        _career.value?.transferHistory.orEmpty().sortedByDescending { it.id }
 
     // -------------------------------------------------------------- finances
 
@@ -1774,9 +1865,18 @@ class GameViewModel(
 
     // ---------------------------------------------------------------- helpers
 
-    private fun updateCareer(transform: (Career) -> Career) {
+    private fun updateCareer(
+        managerCounters: Map<Long, Long> = emptyMap(),
+        transform: (Career) -> Career
+    ) {
         val current = _career.value ?: return
-        val updated = transform(current)
+        val transformed = transform(current)
+        // Keep the transfer desk in step with whatever the transfer engines did:
+        // a bid, counter, rejection or completion updates its record in place.
+        var updated = NegotiationEngine.syncBuy(transformed)
+        if (transformed.pendingSale != null) {
+            updated = NegotiationEngine.syncSell(updated, transformed.pendingSale, managerCounters)
+        }
         _career.value = updated
         persist(updated)
     }
@@ -1821,6 +1921,7 @@ class GameViewModel(
         }
         persistenceScope.cancel()
         sound.release()
+        music.release()
         super.onCleared()
     }
 }

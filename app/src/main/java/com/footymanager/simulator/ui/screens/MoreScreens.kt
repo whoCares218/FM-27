@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -977,6 +978,9 @@ fun SettingsScreen(
     onSetDarkTheme: (Boolean) -> Unit,
     onSetDifficulty: (Difficulty) -> Unit,
     onSetAnimationSpeed: (AnimationSpeed) -> Unit,
+    onSetMusic: (Boolean) -> Unit = {},
+    onSetSoundVolume: (Float) -> Unit = {},
+    onSetMusicVolume: (Float) -> Unit = {},
     onResetCareer: () -> Unit,
     onAbout: () -> Unit
 ) {
@@ -1006,10 +1010,38 @@ fun SettingsScreen(
 
         item {
             FmCard {
+                SectionHeader("Audio")
+                Spacer(Modifier.height(10.dp))
+                SettingSwitch("Background music", settings.musicEnabled, onSetMusic)
+                Spacer(Modifier.height(6.dp))
+                VolumeSlider(
+                    label = "Music volume",
+                    value = settings.musicVolume,
+                    enabled = settings.musicEnabled,
+                    onChange = onSetMusicVolume
+                )
+                Spacer(Modifier.height(12.dp))
+                SettingSwitch("Sound effects", settings.soundEnabled, onSetSound)
+                Spacer(Modifier.height(6.dp))
+                VolumeSlider(
+                    label = "Sound volume",
+                    value = settings.soundVolume,
+                    enabled = settings.soundEnabled,
+                    onChange = onSetSoundVolume
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "All audio is original, synthesised on-device — no licenced tracks are used.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            FmCard {
                 SectionHeader("Presentation")
                 Spacer(Modifier.height(10.dp))
-                SettingSwitch("Sound effects", settings.soundEnabled, onSetSound)
-                Spacer(Modifier.height(8.dp))
                 SettingSwitch("Vibration", settings.vibrationEnabled, onSetVibration)
                 Spacer(Modifier.height(8.dp))
                 SettingSwitch("Dark theme", settings.darkTheme, onSetDarkTheme)
@@ -1158,6 +1190,43 @@ private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -
             color = MaterialTheme.colorScheme.onSurface
         )
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun VolumeSlider(
+    label: String,
+    value: Float,
+    enabled: Boolean,
+    onChange: (Float) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "${(value * 100).toInt()}%",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            enabled = enabled,
+            valueRange = 0f..1f,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

@@ -27,4 +27,7 @@ interface SettingsStore {
     suspend fun setAnimationSpeed(speed: AnimationSpeed)
     suspend fun setDarkTheme(enabled: Boolean)
     suspend fun setDifficulty(difficulty: Difficulty)
+    suspend fun setMusic(enabled: Boolean)
+    suspend fun setSoundVolume(volume: Float)
+    suspend fun setMusicVolume(volume: Float)
 }

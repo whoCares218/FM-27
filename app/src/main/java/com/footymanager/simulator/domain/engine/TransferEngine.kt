@@ -19,6 +19,8 @@ import com.footymanager.simulator.domain.model.SaleStatus
 import com.footymanager.simulator.domain.model.SellingClubResponse
 import com.footymanager.simulator.domain.model.SquadRole
 import com.footymanager.simulator.domain.model.TransferListing
+import com.footymanager.simulator.domain.model.TransferDirection
+import com.footymanager.simulator.domain.model.TransferHistoryEntry
 import com.footymanager.simulator.domain.model.TransferOffer
 import com.footymanager.simulator.domain.model.TransferPackage
 import kotlin.math.roundToInt
@@ -438,6 +440,33 @@ object TransferEngine {
             book = book.filterNot { it.playerId == player.id }
         }
 
+        // A permanent transfer-history row whenever the manager's club is involved.
+        var history = career.transferHistory
+        if (isUserTransfer || isUserSale) {
+            idCounter++
+            val direction = if (isUserTransfer) TransferDirection.IN else TransferDirection.OUT
+            history = (history + TransferHistoryEntry(
+                id = idCounter,
+                playerId = player.id,
+                playerName = player.name,
+                position = player.position,
+                age = player.age,
+                fromClubId = sellingClubId ?: 0L,
+                fromClubName = sellingClubId?.let { career.club(it)?.name } ?: "Free agent",
+                toClubId = buyingClub.id,
+                toClubName = buyingClub.name,
+                fee = offer.fee,
+                wagePerWeek = offer.wagePerWeek,
+                contractYears = offer.contractYears,
+                exchangedPlayerName = makeweight?.name ?: "",
+                exchangedPlayerValue = if (makeweight != null) offer.offerPackage.playerOfferedValue else 0L,
+                direction = direction,
+                season = career.season,
+                date = career.date,
+                matchday = career.matchdayIndex
+            )).takeLast(200)
+        }
+
         return career.copy(
             clubs = updatedClubs,
             players = updatedPlayers,
@@ -458,6 +487,7 @@ object TransferEngine {
                 career.transferIncomeThisSeason + offer.fee
             } else career.transferIncomeThisSeason,
             amortisationBook = book,
+            transferHistory = history,
             transferListings = if (isUserSale) {
                 career.transferListings.filterNot { it.playerId == player.id }
             } else career.transferListings
