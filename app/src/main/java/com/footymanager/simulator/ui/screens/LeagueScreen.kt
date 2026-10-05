@@ -38,6 +38,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.CompetitionType
+import com.footymanager.simulator.domain.model.CupState
+import com.footymanager.simulator.domain.model.cupRoundLabel
 import com.footymanager.simulator.domain.model.League
 import com.footymanager.simulator.domain.model.Match
 import com.footymanager.simulator.domain.model.TableRow
@@ -231,19 +233,39 @@ private fun EuropeTab(career: Career, onOpenCompetition: (CompetitionType) -> Un
 
 @Composable
 private fun CupsTab(career: Career, onOpenFixtures: () -> Unit) {
+    val cup = career.cup
     val cupFixtures = remember(career.fixtures) {
         career.fixtures.filter { it.competition == CompetitionType.DOMESTIC_CUP && it.involves(career.userClubId) }
-            .sortedBy { it.matchday }
+            .sortedBy { it.competitionRound }
     }
     val played = cupFixtures.filter { it.isPlayed }
     val next = cupFixtures.firstOrNull { !it.isPlayed }
+    val eliminated = played.any {
+        it.goalsFor(career.userClubId) < it.goalsAgainst(career.userClubId)
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         FmCard {
-            SectionHeader("Domestic Cup")
+            SectionHeader("Domestic Cup") {
+                Text(
+                    text = when {
+                        cup.winnerClubId == career.userClubId -> "Winners"
+                        eliminated -> "Eliminated"
+                        next != null -> cupRoundLabel(next.competitionRound)
+                        else -> "Not entered"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when {
+                        cup.winnerClubId == career.userClubId -> StatColors.elite
+                        eliminated -> StatColors.bad
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+            }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Knockout football against clubs from across the divisions.",
+                text = "A 32-club knockout with sides from every division. One-off ties, " +
+                    "extra time and penalties if needed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -256,11 +278,11 @@ private fun CupsTab(career: Career, onOpenFixtures: () -> Unit) {
                     valueColor = StatColors.elite
                 )
                 StatCell(
-                    "Status",
+                    "Round",
                     when {
-                        next == null && played.isNotEmpty() -> "Complete"
-                        next == null -> "Not entered"
-                        else -> "Active"
+                        cup.winnerClubId != null -> "Final"
+                        cup.active -> cupRoundLabel(cup.round.coerceIn(1, CupState.ROUNDS))
+                        else -> "—"
                     }
                 )
             }
@@ -273,13 +295,22 @@ private fun CupsTab(career: Career, onOpenFixtures: () -> Unit) {
                 cupFixtures.forEach { match ->
                     val opponent = career.club(match.opponentOf(career.userClubId))
                     val isHome = match.isHomeFor(career.userClubId)
-                    val won = match.goalsFor(career.userClubId) > match.goalsAgainst(career.userClubId)
+                    val won = match.isPlayed &&
+                        match.goalsFor(career.userClubId) > match.goalsAgainst(career.userClubId)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(
+                            text = cupRoundLabel(match.competitionRound),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(84.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         ClubCrest(club = opponent ?: career.userClub, size = 22.dp)
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -317,6 +348,24 @@ private fun CupsTab(career: Career, onOpenFixtures: () -> Unit) {
                 title = "No cup fixtures yet",
                 body = "Cup rounds appear on your calendar as the season progresses."
             )
+        }
+
+        if (cup.winnerClubId != null) {
+            val winner = career.club(cup.winnerClubId)
+            FmCard(accent = StatColors.elite) {
+                SectionHeader("Cup winners")
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ClubCrest(club = winner ?: career.userClub, size = 28.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "${winner?.name ?: "—"} lifted the cup",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
 
         FmCard(onClick = onOpenFixtures) {

@@ -266,7 +266,8 @@ data class Match(
 ) {
     val isPlayed: Boolean get() = status == MatchStatus.PLAYED
 
-    val isKnockout: Boolean get() = competition.isEuropean && tieId != null
+    val isKnockout: Boolean
+        get() = (competition.isEuropean && tieId != null) || competition == CompetitionType.DOMESTIC_CUP
 
     val wentToExtraTime: Boolean
         get() = homeGoalsExtraTime != 0 || awayGoalsExtraTime != 0

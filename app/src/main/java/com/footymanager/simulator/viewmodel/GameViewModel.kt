@@ -12,6 +12,7 @@ import com.footymanager.simulator.domain.data.SaveRepository
 import com.footymanager.simulator.domain.data.SettingsRepository
 import com.footymanager.simulator.domain.data.SettingsStore
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
+import com.footymanager.simulator.domain.engine.CupEngine
 import com.footymanager.simulator.domain.engine.AiManager
 import com.footymanager.simulator.domain.engine.FinanceEngine
 import com.footymanager.simulator.domain.engine.NegotiationEngine
@@ -1465,6 +1466,7 @@ class GameViewModel(
                     // Progress the Champions League bracket once its rounds complete.
                     var idc = current.idCounter
                     current = ChampionsLeagueEngine.progress(current, random) { ++idc }
+                    current = CupEngine.progress(current) { ++idc }
                     current = current.copy(idCounter = idc)
                     if (current.matchdayIndex >= current.totalMatchdays()) {
                         current = current.copy(phase = GamePhase.SEASON_ENDED)

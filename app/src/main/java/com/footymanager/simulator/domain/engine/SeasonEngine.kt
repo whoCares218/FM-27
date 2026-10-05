@@ -514,6 +514,7 @@ object SeasonEngine {
      */
     fun simulateOtherFixtures(career: Career, random: Random): Career {
         var current = career
+        var idCounter = career.idCounter
         val matchday = career.matchdayIndex + 1
 
         // Every domestic league plays on the same round, so results across all
@@ -559,6 +560,22 @@ object SeasonEngine {
             val (updated, _) = simulateFixture(current, match, random, userMatch = false)
             current = updated
         }
+
+        // Domestic cup ties share this round too; the user's own tie is handled
+        // separately so it can be presented on the match-day screen.
+        val cupPending = current.fixtures.filter {
+            it.competition == CompetitionType.DOMESTIC_CUP &&
+                it.matchday == matchday &&
+                !it.isPlayed &&
+                !it.involves(career.userClubId)
+        }
+        for (match in cupPending) {
+            val (updated, _) = simulateFixture(current, match, random, userMatch = false)
+            current = updated
+        }
+
+        // Once a cup round is complete, build the next one (or crown the winner).
+        current = CupEngine.progress(current) { ++idCounter }.copy(idCounter = idCounter)
         return current
     }
 
@@ -1032,6 +1049,14 @@ object SeasonEngine {
             }
         }
 
+        // ---- Domestic knockout cup for the new season ----
+        val (cupState, cupFixtures) = CupEngine.createSeason(
+            career = seedCareer,
+            season = nextSeasonLabel,
+            random = random,
+            idProvider = { ++idCounter }
+        )
+        fixtures += cupFixtures
         val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
 
         // Rebuild the board objectives for the new campaign.
@@ -1092,7 +1117,9 @@ object SeasonEngine {
             championsLeague = uclState,
             europaLeague = uelState,
             conferenceLeague = ueclState,
+            cup = cupState,
             lastStandings = previousStandings,
+            cupWinnerClubId = career.cup.winnerClubId,
             sponsorOffers = newSponsorOffers,
             sponsorship = null,
             sponsorshipSeason = 0,

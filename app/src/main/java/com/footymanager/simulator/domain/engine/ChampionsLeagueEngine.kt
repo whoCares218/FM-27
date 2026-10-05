@@ -97,18 +97,25 @@ object ChampionsLeagueEngine {
         competition: CompetitionType
     ): List<Long> {
         val ucl = buildParticipants(career)
+        val cupWinner = career.cupWinnerClubId
+            ?.takeIf { it !in ucl && career.club(it)?.leagueId != League.CHAMPIONSHIP.id }
+            ?.let { id -> career.club(id) }
         val pool = career.clubs
             .filter { it.id !in ucl }
+            .filter { it.id != cupWinner?.id }
             .filter { it.leagueId != League.CHAMPIONSHIP.id }
             .sortedByDescending { it.reputation }
 
         // The Europa League is stronger than the Conference League, so it takes
         // the better half of the remaining pool and the Conference takes the rest.
         val eligible = pool.take(ChampionsLeagueState.PARTICIPANTS * 2)
-        val ordered = if (competition == CompetitionType.EUROPA_LEAGUE) {
-            eligible.take(ChampionsLeagueState.PARTICIPANTS)
+        val ordered: List<Club> = if (competition == CompetitionType.EUROPA_LEAGUE) {
+            // The cup winner is a guaranteed Europa League entrant.
+            val places = ChampionsLeagueState.PARTICIPANTS - (if (cupWinner != null) 1 else 0)
+            listOfNotNull(cupWinner) + eligible.take(places)
         } else {
-            eligible.drop(ChampionsLeagueState.PARTICIPANTS).take(ChampionsLeagueState.PARTICIPANTS)
+            eligible.drop(ChampionsLeagueState.PARTICIPANTS - (if (cupWinner != null) 1 else 0))
+                .take(ChampionsLeagueState.PARTICIPANTS)
         }
         return ordered.map { it.id }.distinct()
     }

@@ -1,6 +1,7 @@
 package com.footymanager.simulator.domain.data
 
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
+import com.footymanager.simulator.domain.engine.CupEngine
 import com.footymanager.simulator.domain.engine.SponsorshipEngine
 import com.footymanager.simulator.domain.model.BoardObjective
 import com.footymanager.simulator.domain.model.BoardState
@@ -115,6 +116,15 @@ object CareerFactory {
         val uelState = europeanStates.getValue(CompetitionType.EUROPA_LEAGUE)
         val ueclState = europeanStates.getValue(CompetitionType.CONFERENCE_LEAGUE)
 
+        // ---- Domestic knockout cup ----
+        val (cupState, cupFixtures) = CupEngine.createSeason(
+            career = baseCareer,
+            season = Career.CURRENT_SEASON,
+            random = random,
+            idProvider = idProvider
+        )
+        fixtures += cupFixtures
+
         // Every fixture gets a real calendar date.
         val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
 
@@ -186,7 +196,8 @@ object CareerFactory {
             sponsorOffers = sponsorOffers,
             championsLeague = uclState,
             europaLeague = uelState,
-            conferenceLeague = ueclState
+            conferenceLeague = ueclState,
+            cup = cupState
         )
     }
 

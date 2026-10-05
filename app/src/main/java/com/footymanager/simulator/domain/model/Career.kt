@@ -75,6 +75,8 @@ data class Career(
     val sponsorOffers: List<SponsorOffer> = emptyList(),
     /** Champions League state, or [ChampionsLeagueState.EMPTY] when not involved. */
     val championsLeague: ChampionsLeagueState = ChampionsLeagueState.EMPTY,
+    /** Domestic knockout cup state for the current season. */
+    val cup: CupState = CupState.EMPTY,
     /** Europa League state, or an inactive state when not involved. */
     val europaLeague: ChampionsLeagueState = ChampionsLeagueState(
         season = "", competition = CompetitionType.EUROPA_LEAGUE
@@ -92,6 +94,8 @@ data class Career(
      * Drives Champions League qualification in the following campaign.
      */
     val lastStandings: Map<String, List<Long>> = emptyMap(),
+    /** Winner of last season's domestic cup, who earns a Europa League place. */
+    val cupWinnerClubId: Long? = null,
     /** Prize money and competition revenue already banked this season. */
     val competitionRevenueThisSeason: Long = 0L,
     /** Fan mood (0..100). Drives attendance, atmosphere and gate receipts. */

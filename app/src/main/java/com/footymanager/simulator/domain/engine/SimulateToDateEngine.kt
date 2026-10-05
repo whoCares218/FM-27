@@ -84,6 +84,7 @@ object SimulateToDateEngine {
             current = SeasonEngine.advanceWeek(current, random)
             current = FinanceEngine.applyFinancialPressure(current)
             current = ChampionsLeagueEngine.progress(current, random) { ++idCounter }
+            current = CupEngine.progress(current) { ++idCounter }
             current = current.copy(idCounter = idCounter)
         }
 

@@ -65,7 +65,7 @@ object SeasonCalendar {
                 CompetitionType.CONFERENCE_LEAGUE ->
                     if (match.tieId != null) knockoutDate(match.matchday)
                     else europeanLeaguePhaseDate(match.competition, match.competitionRound.coerceAtLeast(1))
-                CompetitionType.DOMESTIC_CUP -> cupDate(match.matchday)
+                CompetitionType.DOMESTIC_CUP -> cupDate(match.competitionRound.coerceAtLeast(1))
                 CompetitionType.FRIENDLY -> leagueDate(match.matchday).plusDays(-3)
             }
             match.copy(date = date)
@@ -103,9 +103,15 @@ object SeasonCalendar {
      */
     fun knockoutDate(matchday: Int): GameDate = leagueDate(matchday).plusDays(-3)
 
-    /** Domestic cup rounds are midweek in the weeks between league games. */
+    /** The first domestic round that carries a cup tie. */
+    private const val CUP_FIRST_ROUND = 5
+
+    /** The domestic round a cup round is played in; rounds are a fortnight apart. */
+    fun cupRoundMatchday(round: Int): Int = CUP_FIRST_ROUND + (round - 1) * 2
+
+    /** Domestic cup rounds are midweek in the week of their designated round. */
     fun cupDate(round: Int): GameDate =
-        SEASON_START.plusDays((round - 1) * 14 + 3)
+        leagueDate(cupRoundMatchday(round)).plusDays(-3)
 
     /** The matchday a fixture's date falls in, used to advance the calendar. */
     fun roundOf(date: GameDate): Int {
