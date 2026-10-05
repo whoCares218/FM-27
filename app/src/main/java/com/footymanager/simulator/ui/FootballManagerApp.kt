@@ -42,6 +42,7 @@ import com.footymanager.simulator.ui.navigation.Routes
 import com.footymanager.simulator.ui.screens.AboutDialog
 import com.footymanager.simulator.ui.screens.BoardScreen
 import com.footymanager.simulator.ui.screens.ClubProfileScreen
+import com.footymanager.simulator.ui.screens.ClubHistoryScreen
 import com.footymanager.simulator.ui.screens.NegotiationDetailScreen
 import com.footymanager.simulator.ui.screens.TransferHistoryScreen
 import com.footymanager.simulator.ui.screens.CompetitionHubScreen
@@ -352,7 +353,8 @@ private fun AppNavHost(
                     onOpenNews = { navController.navigate(Routes.NEWS) },
                     onOpenBoard = { navController.navigate(Routes.BOARD) },
                     onOpenSponsors = { navController.navigate(Routes.SPONSORS) },
-                    onStartNextSeason = { navController.navigate(Routes.SEASON_SUMMARY) }
+                    onStartNextSeason = { navController.navigate(Routes.SEASON_SUMMARY) },
+                    onOpenClubProfile = { navController.navigate(Routes.CLUB_HISTORY) }
                 )
             }
         }
@@ -401,6 +403,16 @@ private fun AppNavHost(
                 ClubProfileScreen(
                     career = career,
                     clubId = clubId,
+                    onBack = { navController.popBackStack() },
+                    onOpenPlayer = { id -> navController.navigate(Routes.playerDetail(id)) }
+                )
+            }
+        }
+
+        composable(Routes.CLUB_HISTORY) {
+            if (career != null) {
+                ClubHistoryScreen(
+                    career = career,
                     onBack = { navController.popBackStack() },
                     onOpenPlayer = { id -> navController.navigate(Routes.playerDetail(id)) }
                 )
@@ -680,6 +692,10 @@ private fun AppNavHost(
                 onSetDifficulty = { viewModel.setDifficulty(it) },
                 onSetAnimationSpeed = { viewModel.setAnimationSpeed(it) },
                 onSetMusic = { viewModel.setMusic(it) },
+                onSetMusicTrack = { viewModel.setMusicTrack(it) },
+                onSetMusicPlayMode = { viewModel.setMusicPlayMode(it) },
+                onPreviewMusic = { viewModel.previewMusic() },
+                onStopMusicPreview = { viewModel.stopMusicPreview() },
                 onSetSoundVolume = { viewModel.setSoundVolume(it) },
                 onSetMusicVolume = { viewModel.setMusicVolume(it) },
                 onResetCareer = {

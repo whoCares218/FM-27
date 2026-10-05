@@ -28,6 +28,8 @@ interface SettingsStore {
     suspend fun setDarkTheme(enabled: Boolean)
     suspend fun setDifficulty(difficulty: Difficulty)
     suspend fun setMusic(enabled: Boolean)
+    suspend fun setMusicTrack(track: com.footymanager.simulator.ui.sound.MusicTrack)
+    suspend fun setMusicPlayMode(mode: com.footymanager.simulator.ui.sound.MusicPlayMode)
     suspend fun setSoundVolume(volume: Float)
     suspend fun setMusicVolume(volume: Float)
 }

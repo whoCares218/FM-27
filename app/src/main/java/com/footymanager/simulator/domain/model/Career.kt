@@ -128,7 +128,13 @@ data class Career(
      */
     val negotiations: List<NegotiationRecord> = emptyList(),
     /** Completed transfers involving the manager's club, for the history view. */
-    val transferHistory: List<TransferHistoryEntry> = emptyList()
+    val transferHistory: List<TransferHistoryEntry> = emptyList(),
+    /**
+     * The club's history across every season of this career: season-by-season
+     * records, all-time player totals and the record boards. Written at season
+     * turnover and never recomputed, so past seasons stay stable.
+     */
+    val clubHistory: ClubHistory = ClubHistory()
 ) {
     /** Outstanding transfer-fee amortisation carried this season, per week. */
     val weeklyAmortisation: Long

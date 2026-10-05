@@ -35,6 +35,7 @@ object Routes {
 
     const val PLAYER_DETAIL = "player/{playerId}"
     const val CLUB_PROFILE = "club/{clubId}"
+    const val CLUB_HISTORY = "club_history"
     const val NEGOTIATION_DETAIL = "negotiation/{negotiationId}"
     const val TRANSFER_HISTORY = "transfer_history"
     const val MATCH_DAY = "match_day"

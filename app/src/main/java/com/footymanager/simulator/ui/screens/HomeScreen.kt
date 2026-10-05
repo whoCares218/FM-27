@@ -65,7 +65,8 @@ fun HomeScreen(
     onOpenNews: () -> Unit,
     onOpenBoard: () -> Unit,
     onOpenSponsors: () -> Unit,
-    onStartNextSeason: () -> Unit
+    onStartNextSeason: () -> Unit,
+    onOpenClubProfile: () -> Unit = {}
 ) {
     val club = career.userClub
     val nextMatch = career.nextFixtureAnyCompetition()
@@ -83,7 +84,13 @@ fun HomeScreen(
         // ---- Club header ----
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ClubCrest(club = club, size = 46.dp)
+                ClubCrest(
+                    club = club,
+                    size = 46.dp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onOpenClubProfile)
+                )
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(

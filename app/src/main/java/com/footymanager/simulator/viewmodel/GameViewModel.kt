@@ -63,6 +63,8 @@ import com.footymanager.simulator.domain.model.TransferListing
 import com.footymanager.simulator.domain.model.TransferHistoryEntry
 import com.footymanager.simulator.domain.model.TransferOffer
 import com.footymanager.simulator.ui.sound.MusicEngine
+import com.footymanager.simulator.ui.sound.MusicPlayMode
+import com.footymanager.simulator.ui.sound.MusicTrack
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.sound.SoundManager
 import kotlinx.coroutines.CoroutineScope
@@ -496,11 +498,33 @@ class GameViewModel(
     fun setDifficulty(difficulty: Difficulty) = viewModelScope.launch { settingsRepository.setDifficulty(difficulty) }
     fun setAnimationSpeed(speed: AnimationSpeed) = viewModelScope.launch { settingsRepository.setAnimationSpeed(speed) }
     fun setMusic(enabled: Boolean) = viewModelScope.launch { settingsRepository.setMusic(enabled) }
+
+    fun setMusicTrack(track: MusicTrack) {
+        music.track = track
+        viewModelScope.launch { settingsRepository.setMusicTrack(track) }
+    }
+
+    fun setMusicPlayMode(mode: MusicPlayMode) {
+        music.playMode = mode
+        viewModelScope.launch { settingsRepository.setMusicPlayMode(mode) }
+    }
+
+    /** Plays the currently selected track as a short preview in Settings. */
+    fun previewMusic() {
+        music.track = _settings.value.musicTrack
+        music.preview()
+    }
+
+    /** Stops a Settings preview. */
+    fun stopMusicPreview() = music.stopPreview()
+
     fun setSoundVolume(volume: Float) = viewModelScope.launch { settingsRepository.setSoundVolume(volume) }
     fun setMusicVolume(volume: Float) = viewModelScope.launch { settingsRepository.setMusicVolume(volume) }
 
     /** Starts the background music if the player has it enabled. */
     fun startMusic() {
+        music.track = _settings.value.musicTrack
+        music.playMode = _settings.value.musicPlayMode
         if (_settings.value.musicEnabled) music.start()
     }
 

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -49,6 +50,8 @@ import com.footymanager.simulator.domain.model.NewsCategory
 import com.footymanager.simulator.domain.model.ObjectiveStatus
 import com.footymanager.simulator.domain.model.SeasonSummary
 import com.footymanager.simulator.domain.model.TrainingFocus
+import com.footymanager.simulator.ui.sound.MusicPlayMode
+import com.footymanager.simulator.ui.sound.MusicTrack
 import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
 import com.footymanager.simulator.ui.components.FmPrimaryButton
@@ -979,12 +982,17 @@ fun SettingsScreen(
     onSetDifficulty: (Difficulty) -> Unit,
     onSetAnimationSpeed: (AnimationSpeed) -> Unit,
     onSetMusic: (Boolean) -> Unit = {},
+    onSetMusicTrack: (MusicTrack) -> Unit = {},
+    onSetMusicPlayMode: (MusicPlayMode) -> Unit = {},
+    onPreviewMusic: () -> Unit = {},
+    onStopMusicPreview: () -> Unit = {},
     onSetSoundVolume: (Float) -> Unit = {},
     onSetMusicVolume: (Float) -> Unit = {},
     onResetCareer: () -> Unit,
     onAbout: () -> Unit
 ) {
     var showResetConfirm by remember { mutableStateOf(false) }
+    var previewing by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1010,9 +1018,9 @@ fun SettingsScreen(
 
         item {
             FmCard {
-                SectionHeader("Audio")
+                SectionHeader("Background music")
                 Spacer(Modifier.height(10.dp))
-                SettingSwitch("Background music", settings.musicEnabled, onSetMusic)
+                SettingSwitch("Music", settings.musicEnabled, onSetMusic)
                 Spacer(Modifier.height(6.dp))
                 VolumeSlider(
                     label = "Music volume",
@@ -1020,7 +1028,100 @@ fun SettingsScreen(
                     enabled = settings.musicEnabled,
                     onChange = onSetMusicVolume
                 )
+
                 Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "TRACK",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                MusicTrack.entries.forEach { option ->
+                    val selected = option == settings.musicTrack
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .clickable { onSetMusicTrack(option) }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { onSetMusicTrack(option) }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = option.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                            )
+                            Text(
+                                text = option.description,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FmSecondaryButton(
+                        text = if (previewing) "Stop preview" else "Preview track",
+                        onClick = {
+                            if (previewing) {
+                                previewing = false
+                                onStopMusicPreview()
+                            } else {
+                                previewing = true
+                                onPreviewMusic()
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "PLAY MODE",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    MusicPlayMode.entries.forEach { option ->
+                        val selected = option == settings.musicPlayMode
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .clip(MaterialTheme.shapes.extraSmall)
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .clickable { onSetMusicPlayMode(option) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = option.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                SectionHeader("Sound effects")
+                Spacer(Modifier.height(8.dp))
                 SettingSwitch("Sound effects", settings.soundEnabled, onSetSound)
                 Spacer(Modifier.height(6.dp))
                 VolumeSlider(

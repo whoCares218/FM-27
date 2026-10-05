@@ -862,6 +862,12 @@ object SeasonEngine {
         // over. Prize money is then applied and the closing position recorded, so
         // the financial history includes the prize money the club actually earned.
         val summary = SeasonSummaryBuilder.build(career)
+        // Record the finished season into the club history before anything is
+        // reset: the final table, player stats and competition outcomes are still
+        // live at this point and are the only source of truth for the archive.
+        val recordedCareer = ClubHistoryEngine.recordSeason(career)
+        val archivedCareer = ClubHistoryEngine.finalisePlayers(recordedCareer)
+        val career = ClubHistoryEngine.recordTrophiesAndTransfers(archivedCareer)
         var idCounter = career.idCounter
 
         // ---- Prize money ----
@@ -1129,7 +1135,8 @@ object SeasonEngine {
             amortisationBook = career.amortisationBook,
             managerRecord = career.managerRecord.copy(
                 trophies = career.managerRecord.trophies + summary.trophies
-            )
+            ),
+            clubHistory = career.clubHistory
         )
     }
 
