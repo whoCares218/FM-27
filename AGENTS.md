@@ -178,3 +178,36 @@ leagues the same size, or give each league its own matchday count.
 - Tests: `NegotiationTest` covers create/counter/no-duplicate/complete/reject/withdraw +
   save-load; `ScreenRenderTest` renders the desk, detail and history screens.
 
+## Domestic cup & competition routing (added 2026-10-05)
+
+- `domain/engine/CupEngine` runs a 32-club single-elimination domestic cup. Entrants are
+  every top-flight club plus lower-division sides by reputation; the user's club is always
+  included. The bracket is stored as an ordered `CupState.entrants` slot list, so a round's
+  ties are always adjacent pairs (0v1, 2v3, ...) and progression just writes winners back
+  into the slots. Cup rounds are played midweek every two matchdays (`CUP_FIRST_ROUND = 5`)
+  and `CupEngine.progress` builds the next round once a round is fully played.
+- Cup ties are `MatchRules.KNOCKOUT` (extra time then a shootout). `CupEngine.winnerOf`
+  reads `homeGoalsExtraTime` + `shootoutHome`, so a tie is only unresolved when all three
+  are absent.
+- Competition routing is centralised in `SeasonEngine.applyResultToCareer`: it reads the
+  *persisted* fixture (which carries the folded-in goals) rather than the caller's possibly
+  stale `match`, then routes by `match.competition`. A domestic result touches only the
+  domestic table; a continental result touches only `career.europeanState(competition)`.
+  Never read the caller's `match` goals here - callers such as `simulateOtherFixtures` pass
+  fixtures that have not yet had their goals written, which silently recorded 0-0 for every
+  continental game. `CompetitionTableRegressionTest` guards this.
+- The domestic cup winner earns a Europa League place next season
+  (`ChampionsLeagueEngine.buildSecondaryParticipants`), unless already in the Champions League.
+- `CupTest` covers creation, seeded draw, round progression, determinism, save/load and the
+  cup-winner European place; `CompetitionTableRegressionTest` and `SimulateToDateTest` cover
+  per-competition table correctness.
+
+## Scoreline realism (verified 2026-10-05)
+
+- Both engines already produce a realistic distribution; do not add a score cap. Fast engine:
+  ~1.43 goals/team, 0.33% of games with a 5+ margin, 7+ goal hauls essentially never. Live
+  engine: ~3.0 total goals, 0.5% 5+ margins. `ScoreRealismTest` fails if the distribution
+  drifts toward either a flood of blowouts or a boring 0-0/1-0 procession.
+- `MatchEngine.secondHalfRate` raises a chasing side's second-half rate and lowers a
+  comfortable leader's; game-state risk is modelled there, not by hard-clamping scores.
+
