@@ -387,11 +387,16 @@ object SeasonEngine {
         )
 
         // ---- Continental football: update the correct competition's table ----
-        val withEurope = if (match.competition.isEuropean && match.tieId == null) {
+        // Use the *persisted* fixture (which carries the result) rather than the
+        // caller's possibly-stale `match`: callers such as the weekly advance pass
+        // fixtures that have not yet had their goals folded in, so reading them
+        // would silently record every continental game as 0-0.
+        val playedFixture = updatedFixtures.firstOrNull { it.id == match.id }
+        val withEurope = if (match.competition.isEuropean && match.tieId == null && playedFixture != null) {
             val state = withLedger.europeanState(match.competition)
             withLedger.withEuropeanState(
                 match.competition,
-                ChampionsLeagueEngine.applyLeagueResult(state, match)
+                ChampionsLeagueEngine.applyLeagueResult(state, playedFixture)
             )
         } else withLedger
 

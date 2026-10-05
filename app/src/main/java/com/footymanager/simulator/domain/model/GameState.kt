@@ -67,6 +67,23 @@ data class GameDate(val year: Int, val month: Int, val day: Int) {
 
     fun short(): String = "$day ${MONTH_NAMES[month - 1].take(3)}"
 
+    /** ISO-style numeric form used by the simulate-to-date screens. */
+    fun numeric(): String = "%02d/%02d/%04d".format(day, month, year)
+
+    /** Days since an arbitrary fixed epoch, for cheap date comparison. */
+    fun toEpochDay(): Long {
+        var total = 0L
+        for (y in 1 until year) total += if (isLeapYear(y)) 366 else 365
+        for (m in 1 until month) total += daysInMonth(year, m)
+        return total + day
+    }
+
+    fun isBefore(other: GameDate): Boolean = toEpochDay() < other.toEpochDay()
+
+    fun isAfter(other: GameDate): Boolean = toEpochDay() > other.toEpochDay()
+
+    fun daysUntil(other: GameDate): Int = (other.toEpochDay() - toEpochDay()).toInt()
+
     fun plusDays(days: Int): GameDate {
         var d = day
         var m = month

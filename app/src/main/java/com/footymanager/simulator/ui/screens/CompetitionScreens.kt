@@ -168,15 +168,14 @@ fun EuropeanCompetitionScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 val sorted = state.sortedTable()
+                UclTableHeader()
                 sorted.forEachIndexed { index, row ->
                     val position = index + 1
                     val isUser = row.clubId == career.userClubId
                     UclTableRow(
                         position = position,
                         clubName = career.club(row.clubId)?.name ?: "Unknown",
-                        played = row.played,
-                        goalDifference = row.goalDifference,
-                        points = row.points,
+                        row = row,
                         status = state.statusOf(row.clubId),
                         isUser = isUser,
                         onClick = { onOpenClub(row.clubId) }
@@ -423,9 +422,7 @@ private fun TieSide(
 private fun UclTableRow(
     position: Int,
     clubName: String,
-    played: Int,
-    goalDifference: Int,
-    points: Int,
+    row: com.footymanager.simulator.domain.model.TableRow,
     status: UclStatus,
     isUser: Boolean,
     onClick: (() -> Unit)? = null
@@ -441,7 +438,7 @@ private fun UclTableRow(
             .then(
                 if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
             )
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -450,45 +447,90 @@ private fun UclTableRow(
                 .clip(RoundedCornerShape(2.dp))
                 .background(statusColor(status))
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
         Text(
             text = "$position",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(22.dp)
+            modifier = Modifier.width(18.dp)
         )
         Text(
             text = clubName,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             fontWeight = if (isUser) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
+        UclCell("${row.played}")
+        UclCell("${row.won}")
+        UclCell("${row.drawn}")
+        UclCell("${row.lost}")
+        UclCell("${row.goalsFor}")
+        UclCell("${row.goalsAgainst}")
+        UclCell(if (row.goalDifference > 0) "+${row.goalDifference}" else "${row.goalDifference}")
         Text(
-            text = "$played",
+            text = "${row.points}",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier.width(26.dp),
             textAlign = TextAlign.End
         )
+    }
+}
+
+@Composable
+private fun UclTableHeader() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(6.dp))
         Text(
-            text = if (goalDifference > 0) "+$goalDifference" else "$goalDifference",
-            style = MaterialTheme.typography.labelMedium,
+            text = "#",
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(34.dp),
-            textAlign = TextAlign.End
+            modifier = Modifier.width(18.dp)
         )
         Text(
-            text = "$points",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(30.dp),
-            textAlign = TextAlign.End
+            text = "CLUB",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        listOf("P", "W", "D", "L", "GF", "GA", "GD").forEach { label ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(18.dp)
+            )
+        }
+        Text(
+            text = "PTS",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(26.dp)
         )
     }
+}
+
+@Composable
+private fun UclCell(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.width(18.dp),
+        textAlign = TextAlign.End
+    )
 }
 
 @Composable

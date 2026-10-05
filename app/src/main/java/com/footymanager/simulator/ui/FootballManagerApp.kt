@@ -59,6 +59,9 @@ import com.footymanager.simulator.ui.screens.PlayerDetailScreen
 import com.footymanager.simulator.ui.screens.RewardsScreen
 import com.footymanager.simulator.ui.screens.SeasonSummaryScreen
 import com.footymanager.simulator.ui.screens.SettingsScreen
+import com.footymanager.simulator.ui.screens.SimulateProgressScreen
+import com.footymanager.simulator.ui.screens.SimulateSummaryScreen
+import com.footymanager.simulator.ui.screens.SimulateToDateScreen
 import com.footymanager.simulator.ui.screens.SquadScreen
 import com.footymanager.simulator.ui.screens.StatisticsScreen
 import com.footymanager.simulator.ui.screens.TacticsScreen
@@ -77,6 +80,7 @@ fun FootballManagerApp(viewModel: GameViewModel) {
     val career by viewModel.career.collectAsStateWithLifecycle()
     val hasSave by viewModel.hasSave.collectAsStateWithLifecycle()
     val matchDay by viewModel.matchDay.collectAsStateWithLifecycle()
+    val simulateToDate by viewModel.simulateToDate.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
 
@@ -191,6 +195,7 @@ fun FootballManagerApp(viewModel: GameViewModel) {
                     viewModel = viewModel,
                     career = career,
                     matchDay = matchDay,
+                    simulateToDate = simulateToDate,
                     hasSave = hasSave,
                     settings = settings,
                     isBusy = isBusy,
@@ -230,6 +235,7 @@ private fun AppNavHost(
     viewModel: GameViewModel,
     career: com.footymanager.simulator.domain.model.Career?,
     matchDay: com.footymanager.simulator.viewmodel.MatchDayState?,
+    simulateToDate: com.footymanager.simulator.viewmodel.SimulateToDateState?,
     hasSave: Boolean,
     settings: com.footymanager.simulator.domain.data.GameSettings,
     isBusy: Boolean,
@@ -332,6 +338,13 @@ private fun AppNavHost(
                         if (viewModel.prepareNextMatch()) {
                             navController.navigate(Routes.MATCH_DAY)
                             viewModel.startMatch(MatchMode.QUICK)
+                        }
+                    },
+                    onSimulateToDate = {
+                        if (viewModel.hasActiveMatch()) {
+                            viewModel.showMatchInProgressMessage()
+                        } else {
+                            navController.navigate(Routes.SIMULATE_TO_DATE)
                         }
                     },
                     onOpenSquad = { navController.navigate(Routes.SQUAD) },
@@ -690,6 +703,68 @@ private fun AppNavHost(
                         popUpTo(Routes.HOME) { inclusive = true }
                     }
                 }
+            }
+        }
+
+        // ------------------------------------------------- simulate to date
+        composable(Routes.SIMULATE_TO_DATE) {
+            if (career == null) {
+                EmptyCareerState(onReturn = {
+                    navController.navigate(Routes.MAIN_MENU) {
+                        popUpTo(Routes.MAIN_MENU) { inclusive = true }
+                    }
+                })
+            } else {
+                SimulateToDateScreen(
+                    career = career,
+                    onBack = { navController.popBackStack() },
+                    onConfirm = { target ->
+                        viewModel.startSimulateToDate(target)
+                        navController.navigate(Routes.SIMULATE_PROGRESS) {
+                            popUpTo(Routes.SIMULATE_TO_DATE) { inclusive = true }
+                        }
+                    }
+                )
+            }
+        }
+
+        composable(Routes.SIMULATE_PROGRESS) {
+            val state = simulateToDate
+            if (state == null) {
+                // The simulation has not started (or was cleared): go home.
+                LaunchedEffect(Unit) {
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.HOME) { inclusive = true }
+                    }
+                }
+            } else if (state.finished) {
+                val summary = state.summary
+                if (summary != null) {
+                    SimulateSummaryScreen(
+                        summary = summary,
+                        onContinue = {
+                            viewModel.clearSimulateToDate()
+                            navController.navigate(Routes.HOME) {
+                                popUpTo(Routes.HOME) { inclusive = true }
+                            }
+                        }
+                    )
+                } else {
+                    LaunchedEffect(Unit) {
+                        viewModel.clearSimulateToDate()
+                        navController.navigate(Routes.HOME) {
+                            popUpTo(Routes.HOME) { inclusive = true }
+                        }
+                    }
+                }
+            } else {
+                SimulateProgressScreen(
+                    state = state,
+                    revealDelayMillis = (settings.animationSpeed.multiplier * 1000f)
+                        .toLong().coerceIn(60L, 1000L),
+                    onAdvance = { viewModel.advanceSimulateReveal() },
+                    onContinue = { viewModel.finishSimulateReveal() }
+                )
             }
         }
     }

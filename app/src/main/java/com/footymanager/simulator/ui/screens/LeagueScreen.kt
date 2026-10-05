@@ -1,5 +1,7 @@
 package com.footymanager.simulator.ui.screens
 
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +45,7 @@ import com.footymanager.simulator.domain.model.europeanCompetitions
 import com.footymanager.simulator.ui.components.ClubCrest
 import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
+import com.footymanager.simulator.ui.components.FmDropdown
 import com.footymanager.simulator.ui.components.FormStrip
 import com.footymanager.simulator.ui.components.ScreenTitle
 import com.footymanager.simulator.ui.components.StatCell
@@ -427,10 +430,26 @@ fun LeagueScreen(
     onOpenFixtures: () -> Unit,
     onOpenClub: (Long) -> Unit = {}
 ) {
-    var selectedLeagueId by remember { mutableStateOf(career.userLeagueId) }
-    val league = League.byId(selectedLeagueId)
-    val table = remember(career.table, selectedLeagueId) { career.sortedTable(selectedLeagueId) }
-    val leagues = League.all.filter { career.clubs.any { c -> c.leagueId == it.id } }
+    val availableLeagues = remember(career.clubs) {
+        League.all.filter { league -> career.clubs.any { it.leagueId == league.id } }
+    }
+    val countries = remember(availableLeagues) {
+        availableLeagues.map { it.country }.distinct().sorted()
+    }
+    var selectedCountry by remember(career.userLeagueId) {
+        mutableStateOf(League.byId(career.userLeagueId).country)
+    }
+    var selectedLeagueId by remember(career.userLeagueId) {
+        mutableStateOf(career.userLeagueId)
+    }
+
+    // The league list follows the chosen country; picking a country resets the
+    // league to that country's first competition.
+    val countryLeagues = availableLeagues.filter { it.country == selectedCountry }
+    val league = countryLeagues.firstOrNull { it.id == selectedLeagueId }
+        ?: League.byId(selectedLeagueId)
+    val table = remember(career.table, league.id) { career.sortedTable(league.id) }
+    val clubCount = remember(career.clubs, league.id) { career.clubs.count { it.leagueId == league.id } }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -438,14 +457,27 @@ fun LeagueScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(leagues, key = { it.id }) { option ->
-                    SelectorChip(
-                        label = option.shortName,
-                        selected = option.id == selectedLeagueId,
-                        onClick = { selectedLeagueId = option.id }
-                    )
-                }
+            FmCard(padding = 12.dp) {
+                FmDropdown(
+                    label = "Country",
+                    options = countries,
+                    selected = selectedCountry,
+                    onSelect = { country ->
+                        selectedCountry = country
+                        availableLeagues.firstOrNull { it.country == country }
+                            ?.let { selectedLeagueId = it.id }
+                    },
+                    optionLabel = { it }
+                )
+                Spacer(Modifier.height(10.dp))
+                FmDropdown(
+                    label = "League",
+                    options = countryLeagues,
+                    selected = league,
+                    onSelect = { selectedLeagueId = it.id },
+                    optionLabel = { it.name },
+                    optionSupporting = { "Tier ${it.tier}" }
+                )
             }
         }
 
@@ -467,6 +499,7 @@ fun LeagueScreen(
                         row = row,
                         career = career,
                         league = league,
+                        clubCount = clubCount,
                         isUserClub = row.clubId == career.userClubId,
                         onClick = { onOpenClub(row.clubId) }
                     )
@@ -476,7 +509,7 @@ fun LeagueScreen(
 
         item {
             Text(
-                text = "Green = promotion or title. Red = relegation.",
+                text = "Green = title or European places. Red = relegation.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -514,22 +547,22 @@ private fun TableHeaderRow() {
             text = "#",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(22.dp)
+            modifier = Modifier.width(20.dp)
         )
-        Spacer(Modifier.width(30.dp))
+        Spacer(Modifier.width(26.dp))
         Text(
             text = "CLUB",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f)
         )
-        listOf("P", "W", "D", "L", "GD", "PTS").forEach { header ->
+        listOf("P", "W", "D", "L", "GF", "GA", "GD", "PTS").forEach { header ->
             Text(
                 text = header,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.width(if (header == "PTS") 30.dp else 22.dp)
+                modifier = Modifier.width(if (header == "PTS") 30.dp else 20.dp)
             )
         }
     }
@@ -541,6 +574,7 @@ private fun TableRowItem(
     row: TableRow,
     career: Career,
     league: League,
+    clubCount: Int,
     isUserClub: Boolean,
     onClick: (() -> Unit)?
 ) {
@@ -549,7 +583,7 @@ private fun TableRowItem(
         position <= 1 -> StatColors.elite
         position <= league.championsLeaguePlaces -> StatColors.good
         position <= 6 -> StatColors.average
-        position > (career.clubs.count { it.leagueId == league.id } - league.relegationPlaces) -> StatColors.bad
+        position > (clubCount - league.relegationPlaces) -> StatColors.bad
         else -> Color.Transparent
     }
 
@@ -572,15 +606,23 @@ private fun TableRowItem(
                 .clip(MaterialTheme.shapes.extraSmall)
                 .background(zoneColor)
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(5.dp))
+        // The user's position slides into place when it changes, so a good run
+        // is visible without reading the number.
+        val animatedPosition by animateIntAsState(
+            targetValue = position,
+            animationSpec = tween(500),
+            label = "leaguePosition"
+        )
         Text(
-            text = "$position",
+            text = if (isUserClub) "$animatedPosition" else "$position",
             style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (isUserClub) FontWeight.Bold else FontWeight.Normal,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(16.dp)
         )
-        ClubCrest(club = club, size = 24.dp)
-        Spacer(Modifier.width(6.dp))
+        ClubCrest(club = club, size = 22.dp)
+        Spacer(Modifier.width(5.dp))
         Text(
             text = club.name,
             style = MaterialTheme.typography.bodySmall,
@@ -594,6 +636,8 @@ private fun TableRowItem(
         TableCell("${row.won}")
         TableCell("${row.drawn}")
         TableCell("${row.lost}")
+        TableCell("${row.goalsFor}")
+        TableCell("${row.goalsAgainst}")
         TableCell(
             text = if (row.goalDifference > 0) "+${row.goalDifference}" else "${row.goalDifference}",
             color = when {
@@ -611,7 +655,7 @@ private fun TableCell(
     text: String,
     color: Color? = null,
     bold: Boolean = false,
-    width: androidx.compose.ui.unit.Dp = 22.dp
+    width: androidx.compose.ui.unit.Dp = 20.dp
 ) {
     Text(
         text = text,

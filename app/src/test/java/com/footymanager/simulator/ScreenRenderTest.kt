@@ -143,7 +143,7 @@ class ScreenRenderTest {
     @Test
     fun `home screen renders a new career`() {
         val c = career()
-        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}, {}) }
+        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}, {}, {}) }
         composeRule.onRoot().assertExists()
         composeRule.onNodeWithText(c.userClub.name, substring = true).assertExists()
     }
@@ -151,7 +151,7 @@ class ScreenRenderTest {
     @Test
     fun `home screen renders mid season with results and news`() {
         val c = playedCareer(6)
-        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}, {}) }
+        setScreen { HomeScreen(c, {}, {}, {}, {}, {}, {}, {}, {}, {}) }
         composeRule.onRoot().assertExists()
     }
 
@@ -384,10 +384,12 @@ class ScreenRenderTest {
         val c = playedCareer(8)
         setScreen { LeagueScreen(career = c, onOpenFixtures = {}) }
         composeRule.onRoot().assertExists()
-        scrollToAndClick("Championship")
-        composeRule.onRoot().assertExists()
-        scrollToAndClick("La Liga")
-        composeRule.onRoot().assertExists()
+        // Switch country via the dropdown; the league list and table follow.
+        composeRule.onNodeWithText("England", substring = false).performClick()
+        composeRule.onNodeWithText("Spain", substring = false).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("La Liga", substring = true).assertExists()
+        composeRule.onNodeWithText("Spain", substring = false).assertExists()
     }
 
     @Test
@@ -443,7 +445,7 @@ class ScreenRenderTest {
 
         setScreen {
             when (screen) {
-                0 -> HomeScreen(currentCareer, {}, {}, {}, {}, {}, {}, {}, {})
+                0 -> HomeScreen(currentCareer, {}, {}, {}, {}, {}, {}, {}, {}, {})
                 1 -> LeagueScreen(currentCareer, {})
                 2 -> FinancesScreen(currentCareer)
                 3 -> BoardScreen(currentCareer)

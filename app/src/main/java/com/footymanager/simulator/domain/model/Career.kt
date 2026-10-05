@@ -242,6 +242,18 @@ data class Career(
             ?: fixtures.maxOfOrNull { it.matchday }
             ?: 0
 
+    /** The last calendar date on which the current season plays a match. */
+    fun seasonEndDate(): GameDate =
+        fixtures.mapNotNull { it.date }.maxByOrNull { it.toEpochDay() }
+            ?: date.plusDays(DAYS_IN_SEASON_FALLBACK)
+
+    /** The last date the manager may simulate to: the end of the current season. */
+    fun simulateHorizon(): GameDate = seasonEndDate()
+
+    /** Every fixture, in every competition, scheduled on a given date. */
+    fun fixturesOnDate(target: GameDate): List<Match> =
+        fixtures.filter { it.date == target }
+
     fun nextMatchdayNumber(): Int = (matchdayIndex + 1).coerceAtMost(totalMatchdays().coerceAtLeast(1))
 
     fun wageBill(clubId: Long): Long = players.filter { it.clubId == clubId }.sumOf { it.wagePerWeek }
@@ -256,5 +268,8 @@ data class Career(
         const val SAVE_VERSION = 1
         const val CURRENT_SEASON = "2026/27"
         const val NEXT_SEASON = "2027/28"
+
+        /** Rough season length used only if no fixture carries a date. */
+        const val DAYS_IN_SEASON_FALLBACK = 300
     }
 }

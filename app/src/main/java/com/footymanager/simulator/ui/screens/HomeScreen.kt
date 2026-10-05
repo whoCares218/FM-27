@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.Newspaper
 import androidx.compose.material3.Icon
@@ -58,6 +59,7 @@ fun HomeScreen(
     career: Career,
     onPlayMatch: () -> Unit,
     onQuickSim: () -> Unit,
+    onSimulateToDate: () -> Unit,
     onOpenSquad: () -> Unit,
     onOpenLeague: () -> Unit,
     onOpenNews: () -> Unit,
@@ -205,6 +207,12 @@ fun HomeScreen(
                     text = "Quick Sim Match",
                     onClick = onQuickSim,
                     icon = Icons.Outlined.FastForward
+                )
+                Spacer(Modifier.height(8.dp))
+                FmSecondaryButton(
+                    text = "Simulate to Date",
+                    onClick = onSimulateToDate,
+                    icon = Icons.Outlined.CalendarMonth
                 )
             }
         }
