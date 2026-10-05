@@ -139,17 +139,25 @@ private fun DomesticTab(career: Career, onOpenLeague: () -> Unit, onOpenFixtures
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Tap to open the table",
+                text = "Tap to open the country and league selectors",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary
             )
         }
 
+        // The whole division, not just the top of it: the manager should be able
+        // to read every club's record from the hub without opening anything.
         if (table.isNotEmpty()) {
             FmCard(padding = 10.dp) {
-                SectionHeader("Top of the table")
+                SectionHeader(league.name) {
+                    Text(
+                        text = "${table.size} clubs",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
-                table.take(5).forEachIndexed { index, row ->
+                table.forEachIndexed { index, row ->
                     HubTableLine(
                         position = index + 1,
                         career = career,

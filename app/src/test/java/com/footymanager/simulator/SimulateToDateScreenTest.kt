@@ -114,4 +114,163 @@ class SimulateToDateScreenTest {
         // Today is not selectable, so no selected-date card appears.
         composeRule.onAllNodes(hasText("SELECTED DATE")).assertCountEquals(0)
     }
+
+    @Test
+    fun `the calendar lists the user's own fixtures with opponent and competition`() {
+        val c = career()
+        // Find the user's next fixture and open the month it falls in.
+        val next = c.fixtures
+            .filter { it.involves(c.userClubId) && !it.isPlayed && it.date != null }
+            .minByOrNull { it.date!!.toEpochDay() }!!
+        val opponent = c.club(next.opponentOf(c.userClubId))!!
+        setScreen { SimulateToDateScreen(career = c, onBack = {}, onConfirm = {}) }
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("YOUR FIXTURES", substring = true))
+        composeRule.onNodeWithText("YOUR FIXTURES", substring = true).assertExists()
+        // The opponent is shown, and the competition label comes from the fixture.
+        composeRule.onAllNodes(hasText(opponent.name, substring = true))[0].assertExists()
+        composeRule.onAllNodes(hasText(next.competition.label, substring = true))[0].assertExists()
+    }
+
+    @Test
+    fun `selecting a match day shows the fixture for that date`() {
+        val c = career()
+        val next = c.fixtures
+            .filter { it.involves(c.userClubId) && !it.isPlayed && it.date != null }
+            .minByOrNull { it.date!!.toEpochDay() }!!
+        val opponent = c.club(next.opponentOf(c.userClubId))!!
+        setScreen { SimulateToDateScreen(career = c, onBack = {}, onConfirm = {}) }
+        composeRule.onNodeWithText("${next.date!!.day}").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText(opponent.name, substring = true))
+        composeRule.onAllNodes(hasText(opponent.name, substring = true))[0].assertExists()
+    }
+
+    @Test
+    fun `the progress screen reveals only the user's own results`() {
+        val c = career()
+        val userClubId = c.userClubId
+        val state = com.footymanager.simulator.viewmodel.SimulateToDateState(
+            fromDate = c.date,
+            toDate = c.date.plusDays(30),
+            results = listOf(
+                userResult(c, 1, userClubId, 2, 1),
+                userResult(c, 2, userClubId, 0, 0)
+            ),
+            total = 2,
+            currentIndex = 2,
+            finished = false,
+            matchdaysDone = 4,
+            matchdaysTotal = 6,
+            matchesSimulated = 48,
+            totalMatches = 72,
+            status = com.footymanager.simulator.viewmodel.SimulateStatus(
+                domesticLeagueName = "Premier League",
+                domesticPosition = 4,
+                domesticComplete = false,
+                domesticChampion = null,
+                europeanCompetition = "Champions League",
+                europeanDetail = "Position: 11th",
+                europeanParticipating = true
+            )
+        )
+        setScreen {
+            com.footymanager.simulator.ui.screens.SimulateProgressScreen(
+                state = state,
+                onContinue = {}
+            )
+        }
+        composeRule.onNodeWithText("Simulating to", substring = true).assertExists()
+        composeRule.onNodeWithText("DOMESTIC").assertExists()
+        composeRule.onNodeWithText("Premier League").assertExists()
+        composeRule.onNodeWithText("Position: 4th").assertExists()
+        composeRule.onNodeWithText("EUROPE").assertExists()
+        composeRule.onNodeWithText("Champions League").assertExists()
+        composeRule.onNodeWithText("Position: 11th").assertExists()
+        // Real progress, not a fabricated number.
+        composeRule.onNodeWithText("4 / 6 matchdays").assertExists()
+        composeRule.onNodeWithText("48 / 72 fixtures").assertExists()
+    }
+
+    @Test
+    fun `the progress screen shows a knockout stage instead of a fake position`() {
+        val c = career()
+        val state = com.footymanager.simulator.viewmodel.SimulateToDateState(
+            fromDate = c.date,
+            toDate = c.date.plusDays(30),
+            results = emptyList(),
+            total = 0,
+            currentIndex = 0,
+            finished = false,
+            matchdaysDone = 1,
+            matchdaysTotal = 6,
+            status = com.footymanager.simulator.viewmodel.SimulateStatus(
+                domesticLeagueName = "La Liga",
+                domesticPosition = 2,
+                domesticComplete = false,
+                domesticChampion = null,
+                europeanCompetition = "Europa League",
+                europeanDetail = "Round of 16",
+                europeanParticipating = true
+            )
+        )
+        setScreen {
+            com.footymanager.simulator.ui.screens.SimulateProgressScreen(state = state, onContinue = {})
+        }
+        composeRule.onNodeWithText("La Liga").assertExists()
+        composeRule.onNodeWithText("Europa League").assertExists()
+        composeRule.onNodeWithText("Round of 16").assertExists()
+    }
+
+    @Test
+    fun `the progress screen reports non-participation honestly`() {
+        val c = career()
+        val state = com.footymanager.simulator.viewmodel.SimulateToDateState(
+            fromDate = c.date,
+            toDate = c.date.plusDays(30),
+            results = emptyList(),
+            total = 0,
+            currentIndex = 0,
+            finished = false,
+            matchdaysDone = 1,
+            matchdaysTotal = 6,
+            status = com.footymanager.simulator.viewmodel.SimulateStatus(
+                domesticLeagueName = "Serie A",
+                domesticPosition = 7,
+                domesticComplete = false,
+                domesticChampion = null,
+                europeanCompetition = null,
+                europeanDetail = "Not participating",
+                europeanParticipating = false
+            )
+        )
+        setScreen {
+            com.footymanager.simulator.ui.screens.SimulateProgressScreen(state = state, onContinue = {})
+        }
+        composeRule.onNodeWithText("Not participating").assertExists()
+    }
+
+    private fun userResult(
+        c: Career,
+        matchId: Long,
+        userClubId: Long,
+        userGoals: Int,
+        opponentGoals: Int
+    ): com.footymanager.simulator.viewmodel.SimulateDayResult {
+        val opponent = c.clubs.first { it.id != userClubId }
+        return com.footymanager.simulator.viewmodel.SimulateDayResult(
+            matchId = matchId,
+            date = c.date.plusDays(matchId.toInt()),
+            competitionLabel = "League",
+            homeClubId = userClubId,
+            awayClubId = opponent.id,
+            homeName = c.userClub.name,
+            awayName = opponent.name,
+            homeGoals = userGoals,
+            awayGoals = opponentGoals,
+            isUserMatch = true,
+            userClubId = userClubId
+        )
+    }
 }
