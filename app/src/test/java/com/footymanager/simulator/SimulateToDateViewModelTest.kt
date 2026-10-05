@@ -222,4 +222,93 @@ class SimulateToDateViewModelTest {
             count
         )
     }
+
+    @Test
+    fun `simulate to date stays usable in seasons two and three`() {
+        val vm = newViewModel()
+        startCareer(vm)
+
+        for (season in 1..3) {
+            assertEquals("Season number must advance", season, vm.career.value!!.seasonNumber)
+
+            // The horizon must always be in the future, and the window must be open.
+            val horizon = vm.simulateHorizon()
+            assertNotNull("Season $season must expose a horizon", horizon)
+            assertTrue(
+                "Season $season: the horizon must be after today",
+                horizon!!.isAfter(vm.career.value!!.date)
+            )
+            assertTrue(
+                "Season $season: tomorrow must be selectable",
+                vm.matchesToSimulate(vm.career.value!!.date.plusDays(60)) > 0
+            )
+
+            // Simulate a chunk of the season, then roll into the next one.
+            simulateTo(vm, days = 60)
+            assertTrue(
+                "Season $season: the calendar must advance",
+                vm.simulateToDate.value?.finished == true
+            )
+            vm.clearSimulateToDate()
+
+            if (season < 3) {
+                vm.startNextSeason()
+                awaitIdle { vm.career.value!!.seasonNumber == season + 1 }
+                assertTrue(
+                    "Season ${season + 1} must begin on its own start date",
+                    vm.career.value!!.date.year >= 2026 + season
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the revealed results contain only the user's own matches`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        simulateTo(vm, days = 150)
+        val state = vm.simulateToDate.value!!
+        assertTrue("The user must have played matches", state.results.isNotEmpty())
+        assertTrue(
+            "Every revealed result must be a user match",
+            state.results.all { it.isUserMatch }
+        )
+        assertTrue(
+            "Every revealed result must involve the user's club",
+            state.results.all { it.homeClubId == it.userClubId || it.awayClubId == it.userClubId }
+        )
+    }
+
+    @Test
+    fun `progress counts real matchdays and the whole world's fixtures`() {
+        val vm = newViewModel()
+        startCareer(vm)
+        simulateTo(vm, days = 150)
+        val state = vm.simulateToDate.value!!
+        assertTrue("Matchdays must be counted", state.matchdaysTotal > 0)
+        assertEquals("A finished run reaches its matchday total", state.matchdaysTotal, state.matchdaysDone)
+        assertTrue(
+            "The world's fixtures must exceed the user's own matches",
+            state.matchesSimulated > state.results.size
+        )
+        assertTrue(
+            "Progress must not exceed the target fixture count by much",
+            state.matchesSimulated <= state.totalMatches + 200
+        )
+    }
+
+    @Test
+    fun `the summary reports the user's domestic league by name, not a hard-coded label`() {
+        val vm = newViewModel()
+        startCareer(vm, clubIndex = 4)
+        simulateTo(vm, days = 150)
+        val summary = vm.simulateToDate.value!!.summary!!
+        val expected = com.footymanager.simulator.domain.model.League
+            .byId(vm.career.value!!.userLeagueId).name
+        assertEquals(
+            "The summary must name the user's actual domestic league",
+            expected,
+            summary.domesticLeagueName
+        )
+    }
 }

@@ -195,6 +195,23 @@ class MusicEngine {
         runCatching { t.setVolume(volume.coerceIn(0f, 1f) * MASTER) }
     }
 
+    /**
+     * Renders a few bars of a track into a PCM buffer without touching any audio
+     * device. Used by tests to prove the five moods really are different, and
+     * available for a future waveform preview.
+     */
+    internal fun renderSamples(track: MusicTrack, bars: Int, sampleRate: Int = 22_050): ShortArray {
+        val profile = profiles.getValue(track)
+        val barSamples = (sampleRate * profile.barSeconds).toInt()
+        val out = ShortArray(barSamples * bars.coerceAtLeast(1))
+        val buffer = ShortArray(barSamples)
+        for (bar in 0 until bars.coerceAtLeast(1)) {
+            renderBar(buffer, barSamples, sampleRate, profile, bar)
+            buffer.copyInto(out, destinationOffset = bar * barSamples, startIndex = 0, endIndex = barSamples)
+        }
+        return out
+    }
+
     /** Renders one bar of the current chord into [out]. */
     private fun renderBar(
         out: ShortArray,

@@ -808,4 +808,72 @@ class ScreenRenderTest {
             hasText(com.footymanager.simulator.domain.model.CompetitionType.CONFERENCE_LEAGUE.label, substring = true)
         )[0].assertExists()
     }
+
+    @Test
+    fun `the club history screen renders every section`() {
+        val c = playedCareer(weeks = 20)
+        setScreen {
+            com.footymanager.simulator.ui.screens.ClubHistoryScreen(
+                career = c,
+                onBack = {},
+                onOpenPlayer = {}
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onNodeWithText("Club History").assertExists()
+        composeRule.onNodeWithText("SEASON HISTORY").assertExists()
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("TROPHY CABINET"))
+        composeRule.onNodeWithText("TROPHY CABINET").assertExists()
+        // The player boards live behind the Players tab.
+        scrollToAndClick("Players")
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("ALL-TIME TOP GOALSCORERS"))
+        composeRule.onNodeWithText("ALL-TIME TOP GOALSCORERS").assertExists()
+    }
+
+    @Test
+    fun `the club history records tab shows wages and injuries`() {
+        val c = playedCareer(weeks = 20)
+        setScreen {
+            com.footymanager.simulator.ui.screens.ClubHistoryScreen(
+                career = c,
+                onBack = {},
+                onOpenPlayer = {}
+            )
+        }
+        scrollToAndClick("Records")
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("SINGLE-SEASON RECORDS"))
+        composeRule.onNodeWithText("SINGLE-SEASON RECORDS").assertExists()
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("TOTAL WAGES PAID", substring = true))
+        composeRule.onNodeWithText("TOTAL WAGES PAID", substring = true).assertExists()
+    }
+
+    @Test
+    fun `the settings screen exposes all five music tracks`() {
+        setScreen {
+            SettingsScreen(
+                settings = com.footymanager.simulator.domain.data.GameSettings(),
+                hasCareer = false,
+                onBack = {},
+                onSetSound = {},
+                onSetVibration = {},
+                onSetDarkTheme = {},
+                onSetDifficulty = {},
+                onSetAnimationSpeed = {},
+                onResetCareer = {},
+                onAbout = {}
+            )
+        }
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("BACKGROUND MUSIC", substring = true))
+        composeRule.onNodeWithText("BACKGROUND MUSIC", substring = true).assertExists()
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("Calm Manager", substring = true))
+        com.footymanager.simulator.ui.sound.MusicTrack.entries.forEach { track ->
+            composeRule.onNodeWithText(track.label, substring = true).assertExists()
+        }
+    }
 }
