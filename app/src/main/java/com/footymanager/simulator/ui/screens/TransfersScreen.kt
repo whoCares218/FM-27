@@ -54,6 +54,7 @@ import com.footymanager.simulator.domain.model.TransferPackage
 import com.footymanager.simulator.ui.components.ClubCrest
 import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
+import com.footymanager.simulator.ui.components.FmDropdown
 import com.footymanager.simulator.ui.components.FmPrimaryButton
 import com.footymanager.simulator.ui.components.FmSecondaryButton
 import com.footymanager.simulator.ui.components.Fmt
@@ -92,9 +93,29 @@ fun TransfersScreen(
     onAcceptSaleBid: (Long) -> Unit,
     onRejectSaleBid: (Long) -> Unit,
     onCancelSale: () -> Unit,
-    onRelease: (Long) -> Unit
+    onRelease: (Long) -> Unit,
+    onPlayersForClub: (Long) -> List<Player> = { emptyList() },
+    /** Tab to open first. A profile "sell" request opens SELL directly. */
+    initialTab: TransferTab = TransferTab.BUY,
+    /** A squad player to open the SELL listing dialog for, if any. */
+    preselectPlayerId: Long? = null,
+    /** Called once the preselect has been consumed so it does not repeat. */
+    onConsumePreselect: () -> Unit = {}
 ) {
-    var tab by remember { mutableStateOf(TransferTab.BUY) }
+    // Not keyed on initialTab: consuming the preselect flips initialTab back to
+    // BUY, and keying the state would snap the tab away from SELL just opened.
+    var tab by remember { mutableStateOf(initialTab) }
+
+    // Honour a one-shot "sell this player" request from his profile: switch to
+    // SELL and hand the id down so the listing dialog opens ready to use.
+    var pendingPlayerId by remember { mutableStateOf(preselectPlayerId) }
+    androidx.compose.runtime.LaunchedEffect(preselectPlayerId) {
+        if (preselectPlayerId != null) {
+            tab = TransferTab.SELL
+            pendingPlayerId = preselectPlayerId
+            onConsumePreselect()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // ---- BUY | SELL selector ----
@@ -139,7 +160,8 @@ fun TransfersScreen(
                 onMakeOfferPackage = onMakeOfferPackage,
                 onAcceptCounter = onAcceptCounter,
                 onSubmitPlayerTerms = onSubmitPlayerTerms,
-                onCancelOffer = onCancelOffer
+                onCancelOffer = onCancelOffer,
+                onPlayersForClub = onPlayersForClub
             )
             TransferTab.SELL -> SellSection(
                 career = career,
@@ -150,7 +172,9 @@ fun TransfersScreen(
                 onAcceptSaleBid = onAcceptSaleBid,
                 onRejectSaleBid = onRejectSaleBid,
                 onCancelSale = onCancelSale,
-                onRelease = onRelease
+                onRelease = onRelease,
+                preselectPlayerId = pendingPlayerId,
+                onPreselectConsumed = { pendingPlayerId = null }
             )
         }
     }
@@ -166,7 +190,8 @@ private fun BuySection(
     onMakeOfferPackage: (Long, TransferPackage, ContractTerms) -> Unit,
     onAcceptCounter: (Long) -> Unit,
     onSubmitPlayerTerms: (Long, ContractTerms) -> Unit,
-    onCancelOffer: (Long) -> Unit
+    onCancelOffer: (Long) -> Unit,
+    onPlayersForClub: (Long) -> List<Player>
 ) {
     var query by remember { mutableStateOf("") }
     var positionFilter by remember { mutableStateOf<Position?>(null) }
@@ -174,6 +199,21 @@ private fun BuySection(
     var affordableOnly by remember { mutableStateOf(false) }
     var shortlist by remember { mutableStateOf(emptySet<Long>()) }
     var negotiatingPlayerId by remember { mutableStateOf<Long?>(null) }
+
+    // League -> club browse: pick a competition, then a club, then inspect its
+    // full squad. This is the scouting route for a specific team's players.
+    val leagues = remember { com.footymanager.simulator.domain.model.League.all }
+    var browseLeague by remember { mutableStateOf(leagues.firstOrNull()) }
+    var browseClubId by remember { mutableStateOf<Long?>(null) }
+    val browseClubs = remember(browseLeague, career.clubs) {
+        career.clubs.filter { it.leagueId == browseLeague?.id }.sortedBy { it.name }
+    }
+    val browseClub = remember(browseClubId, career.clubs) {
+        browseClubId?.let { id -> career.clubs.firstOrNull { it.id == id } }
+    }
+    val browsePlayers = remember(browseClubId, career.players) {
+        browseClubId?.let { onPlayersForClub(it) }.orEmpty()
+    }
 
     val results = remember(query, positionFilter, career.players, career.clubs) {
         onSearch(query, positionFilter)
@@ -296,6 +336,65 @@ private fun BuySection(
             }
         }
 
+        // ---- League -> Team browse ----
+        item {
+            FmCard {
+                SectionHeader("Browse by league and team")
+                Spacer(Modifier.height(8.dp))
+                FmDropdown(
+                    label = "League",
+                    options = leagues,
+                    selected = browseLeague ?: leagues.first(),
+                    onSelect = { league ->
+                        browseLeague = league
+                        browseClubId = null
+                    },
+                    optionLabel = { it.name }
+                )
+                Spacer(Modifier.height(10.dp))
+                if (browseClubs.isNotEmpty()) {
+                    FmDropdown(
+                        label = "Team",
+                        options = browseClubs,
+                        selected = browseClub ?: browseClubs.first(),
+                        onSelect = { club -> browseClubId = club.id },
+                        optionLabel = { it.name },
+                        optionSupporting = { club ->
+                            "Reputation ${club.reputation} • Squad ${career.squadOf(club.id).size}"
+                        }
+                    )
+                }
+                if (browseClub != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "${browseClub.name} squad (${browsePlayers.size} players). " +
+                            "Tap a player to inspect and bid.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        if (browseClub != null && browsePlayers.isNotEmpty()) {
+            item { SectionHeader("${browseClub.name} squad") }
+            items(browsePlayers, key = { "browse-${it.id}" }) { player ->
+                MarketPlayerRow(
+                    player = player,
+                    career = career,
+                    askingPrice = onAskingPrice(player),
+                    expectedWage = onExpectedWage(player),
+                    affordable = career.userClub.transferBudget >= onAskingPrice(player),
+                    shortlisted = player.id in shortlist,
+                    onToggleShortlist = {
+                        shortlist = if (player.id in shortlist) shortlist - player.id
+                        else shortlist + player.id
+                    },
+                    onClick = { negotiatingPlayerId = player.id }
+                )
+            }
+        }
+
         if (shortlisted.isNotEmpty()) {
             item { SectionHeader("Shortlist (${shortlisted.size})") }
             items(shortlisted, key = { "short-${it.id}" }) { player ->
@@ -374,11 +473,21 @@ private fun SellSection(
     onAcceptSaleBid: (Long) -> Unit,
     onRejectSaleBid: (Long) -> Unit,
     onCancelSale: () -> Unit,
-    onRelease: (Long) -> Unit
+    onRelease: (Long) -> Unit,
+    preselectPlayerId: Long? = null,
+    onPreselectConsumed: () -> Unit = {}
 ) {
     var sellingPlayerId by remember { mutableStateOf<Long?>(null) }
     val sale = career.pendingSale
     val windowOpen = career.transferWindow.isOpen(career.matchdayIndex)
+
+    // Open the listing dialog straight away when arriving from a player profile.
+    androidx.compose.runtime.LaunchedEffect(preselectPlayerId) {
+        if (preselectPlayerId != null && career.player(preselectPlayerId) != null) {
+            sellingPlayerId = preselectPlayerId
+            onPreselectConsumed()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

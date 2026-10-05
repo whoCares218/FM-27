@@ -41,6 +41,9 @@ import com.footymanager.simulator.ui.screens.SquadScreen
 import com.footymanager.simulator.ui.screens.StatisticsScreen
 import com.footymanager.simulator.ui.screens.TacticsScreen
 import com.footymanager.simulator.ui.screens.TrainingScreen
+import com.footymanager.simulator.ui.screens.TransfersScreen
+import com.footymanager.simulator.ui.screens.TransferTab
+import com.footymanager.simulator.ui.screens.MatchDayScreen
 import com.footymanager.simulator.ui.theme.FootballManagerTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -212,6 +215,71 @@ class ScreenRenderTest {
     }
 
     @Test
+    fun `finished match offers a top-right continue that advances the career`() {
+        val c = career(21)
+        val match = c.nextMatch()!!
+        val opponent = c.club(match.opponentOf(c.userClubId))!!
+        val homeId = match.homeClubId
+        val awayId = match.awayClubId
+        val result = com.footymanager.simulator.domain.model.MatchResult(
+            matchId = match.id,
+            leagueId = match.leagueId,
+            matchday = match.matchday,
+            homeClubId = homeId,
+            awayClubId = awayId,
+            homeGoals = 2,
+            awayGoals = 1,
+            homeStats = com.footymanager.simulator.domain.model.TeamMatchStats(clubId = homeId),
+            awayStats = com.footymanager.simulator.domain.model.TeamMatchStats(clubId = awayId),
+            events = emptyList(),
+            playerRatings = emptyList()
+        )
+        val state = com.footymanager.simulator.viewmodel.MatchDayState(
+            match = match,
+            opponent = opponent,
+            isHome = match.homeClubId == c.userClubId,
+            opponentFormationName = opponent.formationId,
+            userFormationName = c.tactics.formation.name,
+            started = true,
+            phase = com.footymanager.simulator.domain.engine.MatchPhase.FINISHED,
+            homeGoals = 2,
+            awayGoals = 1,
+            result = result,
+            positionBefore = 8,
+            positionAfter = 6
+        )
+        var continued = false
+        setScreen {
+            MatchDayScreen(
+                career = c,
+                matchDay = state,
+                onBack = {},
+                onStart = {},
+                onContinueSecondHalf = {},
+                onContinueExtraTime = {},
+                onPause = {},
+                onResume = {},
+                onQuickSimFromHere = {},
+                onMakeLiveSub = { _, _ -> },
+                onPlanSub = { _, _ -> },
+                onCancelSub = {},
+                onApplyLiveTactics = {},
+                onContinueAfterMatch = { continued = true }
+            )
+        }
+        // The top-right control must be a single CONTINUE action, not a disabled
+        // "GAME ENDED" chip buried under the summary.
+        val continueNode = composeRule.onNodeWithText("CONTINUE", substring = false)
+        continueNode.assertExists()
+        val bounds = continueNode.fetchSemanticsNode().boundsInRoot
+        assertTrue("Continue must sit in the top band, was top=${bounds.top}", bounds.top < 120f)
+        continueNode.performClick()
+        assertTrue("Continue must invoke the advance callback", continued)
+    }
+
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @org.robolectric.annotation.Config(sdk = [34])
     fun `tactics screen is compact with no large gap above the starting XI`() {
         val c = career()
         setScreen {
@@ -250,7 +318,20 @@ class ScreenRenderTest {
         val gap = startingXi.top - formation.bottom
         assertTrue(
             "The Starting XI header must sit right under the formation block, gap was $gap",
-            gap < 120f
+            gap < 100f
+        )
+
+        // The formation hint must occupy a real horizontal line. It once collapsed
+        // to zero width inside a SpaceBetween Row and wrapped one character per
+        // line, creating a large invisible column above the XI. NATIVE graphics is
+        // required so Robolectric measures text with real-device metrics; the
+        // legacy mode's font metrics masked the collapse.
+        val hint = composeRule.onNodeWithText("tap a player", substring = true)
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("The formation hint must have real width, was ${hint.width}", hint.width > 60f)
+        assertTrue(
+            "The formation hint must be a single line, height was ${hint.height}",
+            hint.height < 40f
         )
     }
 
@@ -265,7 +346,8 @@ class ScreenRenderTest {
                 onBack = {},
                 onSetCaptain = {},
                 onToggleSubstitute = {},
-                onTransferList = {}
+                onSellPlayer = {},
+                onRelease = {}
             )
         }
         // Re-point the screen at every player in turn: any illegal attribute,
@@ -287,7 +369,8 @@ class ScreenRenderTest {
                 onBack = {},
                 onSetCaptain = {},
                 onToggleSubstitute = {},
-                onTransferList = {}
+                onSellPlayer = {},
+                onRelease = {}
             )
         }
         composeRule.onNodeWithText("no longer at the club", substring = true).assertExists()
@@ -482,6 +565,110 @@ class ScreenRenderTest {
             )
         }
         composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun `player profile offers sell and release, and release asks for confirmation`() {
+        val c = career()
+        val player = c.userSquad.first()
+        var soldId: Long? = null
+        var releasedId: Long? = null
+        setScreen {
+            PlayerDetailScreen(
+                career = c,
+                playerId = player.id,
+                onBack = {},
+                onSetCaptain = {},
+                onToggleSubstitute = {},
+                onSellPlayer = { soldId = it },
+                onRelease = { releasedId = it }
+            )
+        }
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("ACTIONS", substring = false))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Sell player").performScrollTo().performClick()
+        assertEquals("Sell must report the player id", player.id, soldId)
+
+        // Release must not fire until the manager confirms the dialog.
+        composeRule.onNodeWithText("Release player").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertTrue("Release must be null until confirmed", releasedId == null)
+        composeRule.onNodeWithText("Release ${player.name}?", substring = false).assertExists()
+        composeRule.onNodeWithText("Release", substring = false).performClick()
+        composeRule.waitForIdle()
+        assertEquals("Confirmed release reports the player id", player.id, releasedId)
+    }
+
+    @Test
+    fun `transfers screen shows BUY and SELL sections plus a league and team browse`() {
+        val c = career()
+        setScreen {
+            TransfersScreen(
+                career = c,
+                onSearch = { _, _ -> emptyList() },
+                onAskingPrice = { it.value },
+                onExpectedWage = { it.wagePerWeek },
+                onRequiredPackage = { com.footymanager.simulator.domain.model.TransferPackage(it.value) },
+                onMakeOfferPackage = { _, _, _ -> },
+                onAcceptCounter = {},
+                onSubmitPlayerTerms = { _, _ -> },
+                onCancelOffer = {},
+                onListPlayer = { _, _ -> },
+                onSetAskingPrice = { _, _ -> },
+                onInterestedCount = { _, _ -> 0 },
+                onCounterSaleBid = { _, _ -> },
+                onAcceptSaleBid = {},
+                onRejectSaleBid = {},
+                onCancelSale = {},
+                onRelease = {},
+                onPlayersForClub = { emptyList() }
+            )
+        }
+        composeRule.onNodeWithText("BUY", substring = false).assertExists()
+        composeRule.onNodeWithText("SELL", substring = false).assertExists()
+        // The League -> Team browse must be present in the BUY section. Its header
+        // is uppercased by SectionHeader, so match on that form.
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("BROWSE BY LEAGUE AND TEAM", substring = false))
+        composeRule.onNodeWithText("BROWSE BY LEAGUE AND TEAM", substring = false).assertExists()
+    }
+
+    @Test
+    fun `transfers screen opens the SELL listing dialog when asked to sell a player`() {
+        val c = career()
+        val player = c.userSquad.first()
+        var listedId: Long? = null
+        var consumed = false
+        setScreen {
+            TransfersScreen(
+                career = c,
+                onSearch = { _, _ -> emptyList() },
+                onAskingPrice = { it.value },
+                onExpectedWage = { it.wagePerWeek },
+                onRequiredPackage = { com.footymanager.simulator.domain.model.TransferPackage(it.value) },
+                onMakeOfferPackage = { _, _, _ -> },
+                onAcceptCounter = {},
+                onSubmitPlayerTerms = { _, _ -> },
+                onCancelOffer = {},
+                onListPlayer = { id, _ -> listedId = id },
+                onSetAskingPrice = { _, _ -> },
+                onInterestedCount = { _, _ -> 0 },
+                onCounterSaleBid = { _, _ -> },
+                onAcceptSaleBid = {},
+                onRejectSaleBid = {},
+                onCancelSale = {},
+                onRelease = {},
+                onPlayersForClub = { emptyList() },
+                initialTab = TransferTab.SELL,
+                preselectPlayerId = player.id,
+                onConsumePreselect = { consumed = true }
+            )
+        }
+        composeRule.waitForIdle()
+        assertTrue("Preselect must be consumed once", consumed)
+        // The listing dialog names the player and offers a confirm action.
+        composeRule.onNodeWithText(player.name, substring = true).assertExists()
     }
 
     @Test

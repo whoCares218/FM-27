@@ -172,7 +172,8 @@ private fun PreMatchView(
                     onPause = {},
                     onResume = {},
                     onContinueSecondHalf = {},
-                    onContinueExtraTime = {}
+                    onContinueExtraTime = {},
+                    onContinueAfterMatch = {}
                 )
             }
         }
@@ -366,7 +367,8 @@ private fun LiveMatchView(
                     onPause = onPause,
                     onResume = onResume,
                     onContinueSecondHalf = {},
-                    onContinueExtraTime = onContinueExtraTime
+                    onContinueExtraTime = onContinueExtraTime,
+                    onContinueAfterMatch = {}
                 )
             }
         }
@@ -661,7 +663,8 @@ private fun HalfTimeView(
                     onPause = {},
                     onResume = {},
                     onContinueSecondHalf = onContinue,
-                    onContinueExtraTime = {}
+                    onContinueExtraTime = {},
+                    onContinueAfterMatch = {}
                 )
             }
         }
@@ -1312,7 +1315,8 @@ private fun FinishedMatchView(
                     onPause = {},
                     onResume = {},
                     onContinueSecondHalf = {},
-                    onContinueExtraTime = {}
+                    onContinueExtraTime = {},
+                    onContinueAfterMatch = onContinue
                 )
             }
         }
@@ -1677,7 +1681,7 @@ private fun MatchHeader(
  *  - while running:   PAUSE
  *  - while paused:    CONTINUE
  *  - at the interval: START 2ND HALF
- *  - after full time: GAME ENDED (disabled)
+ *  - after full time: CONTINUE (leaves the summary and advances the career)
  */
 @Composable
 private fun MatchTopControl(
@@ -1686,11 +1690,12 @@ private fun MatchTopControl(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onContinueSecondHalf: () -> Unit,
-    onContinueExtraTime: () -> Unit
+    onContinueExtraTime: () -> Unit,
+    onContinueAfterMatch: () -> Unit
 ) {
     when {
         matchDay.isPlayed -> {
-            ControlChip(text = "GAME ENDED", enabled = false, onClick = {})
+            ControlChip(text = "CONTINUE", primary = true, onClick = onContinueAfterMatch)
         }
         !matchDay.started -> {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

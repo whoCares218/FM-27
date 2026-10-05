@@ -18,10 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.LocalHospital
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,7 +57,8 @@ fun PlayerDetailScreen(
     onBack: () -> Unit,
     onSetCaptain: (Long) -> Unit,
     onToggleSubstitute: (Long) -> Unit,
-    onTransferList: (Long) -> Unit
+    onSellPlayer: (Long) -> Unit,
+    onRelease: (Long) -> Unit
 ) {
     val player = career.player(playerId)
     if (player == null) {
@@ -78,6 +81,7 @@ fun PlayerDetailScreen(
     val isStarter = career.selection.startingXi.any { it.playerId == player.id }
     val isOnBench = player.id in career.selection.substitutes
     var tab by remember { mutableStateOf(ProfileTab.OVERVIEW) }
+    var confirmRelease by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -421,19 +425,49 @@ fun PlayerDetailScreen(
                     )
                     Spacer(Modifier.height(8.dp))
                     FmSecondaryButton(
+                        text = "Sell player",
+                        onClick = { onSellPlayer(player.id) }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FmSecondaryButton(
                         text = "Release player",
-                        onClick = { onTransferList(player.id) }
+                        onClick = { confirmRelease = true }
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Releasing removes the player from your squad with no fee. " +
-                            "To sell him for a fee, use the Transfers tab.",
+                        text = "Selling opens the Transfers tab with this player ready to " +
+                            "list. Releasing removes him with no fee.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
+    }
+
+    if (confirmRelease) {
+        AlertDialog(
+            onDismissRequest = { confirmRelease = false },
+            title = { Text("Release ${player.name}?") },
+            text = {
+                Text(
+                    "He will leave the club immediately with no transfer fee and no " +
+                        "money coming back. If you want to cash in, list him in the " +
+                        "Transfers tab instead."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRelease = false
+                        onRelease(player.id)
+                    }
+                ) { Text("Release", color = StatColors.bad) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRelease = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 

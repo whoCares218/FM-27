@@ -149,18 +149,18 @@ fun TacticsScreen(
                     optionSupporting = { it.description }
                 )
                 Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SectionHeader("Starting XI")
-                    Text(
-                        text = "${formation.name} · tap a player",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                SectionHeader(
+                    title = "Starting XI",
+                    trailing = {
+                        Text(
+                            text = "${formation.name} · tap a player",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                )
                 Spacer(Modifier.height(8.dp))
                 FormationPitch(
                     formation = formation,
@@ -548,147 +548,6 @@ private fun AdvancedInstructionsCard(tactics: Tactics, onApply: (Tactics) -> Uni
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-    }
-}
-
-/**
- * A compact, grid-based starting XI.
- *
- * Each formation slot is rendered as a tidy row rather than a pitch token: role
- * tag, player name, rating, condition and the captain marker. Tapping a row opens
- * the picker for that slot. This keeps the XI legible on a phone, never overflows
- * at large font scales, and sits directly beneath the formation selector.
- */
-@Composable
-private fun LineupGrid(
-    formation: Formation,
-    selection: TeamSelection,
-    byId: Map<Long, Player>,
-    captainId: Long?,
-    onSlotClick: (Int) -> Unit
-) {
-    val slotsByIndex = selection.startingXi.associateBy { it.slotIndex }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-            .padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        formation.roles.forEachIndexed { index, role ->
-            val slot = slotsByIndex[index]
-            val player = slot?.let { byId[it.playerId] }
-            val outOfPosition = slot?.outOfPosition ?: false
-            LineupRow(
-                role = role,
-                player = player,
-                outOfPosition = outOfPosition,
-                isCaptain = player != null && player.id == captainId,
-                onClick = { onSlotClick(index) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun LineupRow(
-    role: com.footymanager.simulator.domain.model.SlotRole,
-    player: Player?,
-    outOfPosition: Boolean,
-    isCaptain: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.extraSmall)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .width(42.dp)
-                .clip(MaterialTheme.shapes.extraSmall)
-                .background(
-                    if (outOfPosition) StatColors.poor.copy(alpha = 0.22f)
-                    else MaterialTheme.colorScheme.surfaceContainer
-                )
-                .padding(vertical = 3.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = role.short,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (outOfPosition) StatColors.poor else MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = player?.name ?: "Empty",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (player != null) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (isCaptain) {
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.Filled.Star,
-                        contentDescription = "Captain",
-                        tint = StatColors.elite,
-                        modifier = Modifier.size(12.dp)
-                    )
-                }
-            }
-            if (player != null) {
-                Text(
-                    text = "${role.longName} · ${player.fitness}% condition",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (outOfPosition) StatColors.poor
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        Spacer(Modifier.width(6.dp))
-        if (player != null) {
-            RatingBadge(player.overall, size = 30.dp)
-        } else {
-            Text(
-                text = "+",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/** A single summary figure under the formation selector. */
-@Composable
-private fun androidx.compose.foundation.layout.RowScope.FormationStat(label: String, value: Int) {
-    Column(modifier = Modifier.weight(1f)) {
-        Text(
-            text = value.toString(),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 

@@ -62,6 +62,7 @@ import com.footymanager.simulator.ui.screens.StatisticsScreen
 import com.footymanager.simulator.ui.screens.TacticsScreen
 import com.footymanager.simulator.ui.screens.TrainingScreen
 import com.footymanager.simulator.ui.screens.TransfersScreen
+import com.footymanager.simulator.ui.screens.TransferTab
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.theme.FootballManagerTheme
 import com.footymanager.simulator.viewmodel.GameViewModel
@@ -339,9 +340,14 @@ private fun AppNavHost(
                     onBack = { navController.popBackStack() },
                     onSetCaptain = { viewModel.setCaptain(it) },
                     onToggleSubstitute = { viewModel.toggleSubstitute(it) },
-                    onTransferList = {
-                        viewModel.releasePlayer(it)
-                    }
+                    onSellPlayer = { playerId ->
+                        viewModel.requestSellPlayer(playerId)
+                        navController.navigate(Routes.TRANSFERS) {
+                            popUpTo(Routes.HOME) { saveState = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onRelease = { viewModel.releasePlayer(it) }
                 )
             }
         }
@@ -397,6 +403,7 @@ private fun AppNavHost(
         // ----------------------------------------------------- transfers
         composable(Routes.TRANSFERS) {
             if (career != null) {
+                val sellTarget by viewModel.sellTarget.collectAsStateWithLifecycle()
                 TransfersScreen(
                     career = career,
                     onSearch = { query, position -> viewModel.searchTransferMarket(query, position) },
@@ -416,7 +423,11 @@ private fun AppNavHost(
                     onAcceptSaleBid = { clubId -> viewModel.acceptSaleBid(clubId) },
                     onRejectSaleBid = { clubId -> viewModel.rejectSaleBid(clubId) },
                     onCancelSale = { viewModel.cancelSale() },
-                    onRelease = { viewModel.releasePlayer(it) }
+                    onRelease = { viewModel.releasePlayer(it) },
+                    onPlayersForClub = { clubId -> viewModel.playersForClub(clubId) },
+                    initialTab = if (sellTarget != null) TransferTab.SELL else TransferTab.BUY,
+                    preselectPlayerId = sellTarget,
+                    onConsumePreselect = { viewModel.consumeSellTarget() }
                 )
             }
         }

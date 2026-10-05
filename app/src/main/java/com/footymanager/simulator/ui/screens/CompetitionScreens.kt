@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -420,21 +421,6 @@ fun StadiumScreen(
     val band = stadium.priceBand(career.userClub.reputation)
     var price by remember(stadium.ticketPrice) { mutableFloatStateOf(stadium.ticketPrice.toFloat()) }
 
-    // A live estimate for a typical home match at the chosen price, so the
-    // manager can see the demand curve move as they drag the slider.
-    val ppg = com.footymanager.simulator.domain.engine.AiManager.recentPointsPerGame(
-        career.fixtures.filter { it.isPlayed && it.involves(career.userClubId) },
-        career.userClubId
-    )
-    val previewEstimate = remember(price, stadium.capacity) {
-        com.footymanager.simulator.domain.engine.StadiumEngine.estimate(
-            stadium = stadium.copy(ticketPrice = price.toInt()),
-            reputation = career.userClub.reputation,
-            opponentReputation = career.userClub.reputation,
-            recentPointsPerGame = ppg,
-            fanSatisfaction = career.fanSatisfaction
-        )
-    }
     val occupancy = if (stadium.capacity > 0) {
         stadium.averageAttendance * 100.0 / stadium.capacity
     } else 0.0
@@ -506,20 +492,25 @@ fun StadiumScreen(
                     )
                 }
                 Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    StatCell("Expected crowd", "${"%,d".format(previewEstimate.expectedAttendance)}")
-                    StatCell("Occupancy", "%.0f%%".format(previewEstimate.occupancyPercent))
-                    StatCell("Gate estimate", Fmt.money(previewEstimate.estimatedTicketRevenue))
+                // The demand curve is real and still drives attendance and gate
+                // income in the match engine; here we only explain the trade-off
+                // rather than showing forecast figures.
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        Icons.Outlined.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "IMPORTANT: Higher ticket prices may reduce attendance and " +
+                            "may prevent the stadium from filling completely. Lower prices " +
+                            "fill more seats but earn less per supporter.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = priceHint(price.toInt(), band, previewEstimate.expectedAttendance, stadium.capacity),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 Spacer(Modifier.height(10.dp))
                 FmPrimaryButton(
                     text = "Set price to £${price.toInt()}",
@@ -570,17 +561,6 @@ fun StadiumScreen(
                 }
             }
         }
-    }
-}
-
-private fun priceHint(price: Int, band: IntRange, expected: Int, capacity: Int): String {
-    val occupancy = if (capacity > 0) expected * 100.0 / capacity else 0.0
-    return when {
-        price < band.first -> "Bargain pricing: ${"%.0f".format(occupancy)}% full, " +
-            "but you are leaving money on the table."
-        price > band.last -> "Premium pricing: only ${"%.0f".format(occupancy)}% full, " +
-            "and the atmosphere suffers."
-        else -> "Sensible pricing for this club's support."
     }
 }
 

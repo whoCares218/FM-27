@@ -228,6 +228,14 @@ class GameViewModel(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    /**
+     * A player the manager asked to sell from his profile. The Transfers screen
+     * reads it once to open the SELL tab with that player's listing dialog ready,
+     * then clears it so a later visit starts from the squad list.
+     */
+    private val _sellTarget = MutableStateFlow<Long?>(null)
+    val sellTarget: StateFlow<Long?> = _sellTarget.asStateFlow()
+
     /** Lightweight synthesised sound effects, gated by the player's setting. */
     val sound = SoundManager()
 
@@ -1450,6 +1458,13 @@ class GameViewModel(
             .filter { position == null || it.position == position }
     }
 
+    /** The full squad of another club, for the League -> Team transfer browse. */
+    fun playersForClub(clubId: Long): List<Player> {
+        val career = _career.value ?: return emptyList()
+        if (clubId == career.userClubId) return emptyList()
+        return career.squadOf(clubId).sortedByDescending { it.overall }
+    }
+
     fun makeOffer(playerId: Long, fee: Long, wage: Long, contractYears: Int) {
         playSound(SoundCue.CLICK)
         updateCareer { career ->
@@ -1528,6 +1543,18 @@ class GameViewModel(
 
     fun releasePlayer(playerId: Long) {
         updateCareer { career -> TransferEngine.releasePlayer(career, playerId) }
+    }
+
+    /** Marks a player to sell; the Transfers screen opens SELL with him selected. */
+    fun requestSellPlayer(playerId: Long) {
+        _sellTarget.value = playerId
+    }
+
+    /** Reads and clears the pending sell target, so it only applies once. */
+    fun consumeSellTarget(): Long? {
+        val target = _sellTarget.value
+        _sellTarget.value = null
+        return target
     }
 
     fun interestedBuyers(playerId: Long): List<Pair<Club, Long>> {
