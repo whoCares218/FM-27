@@ -780,10 +780,6 @@ private fun AppNavHost(
             } else {
                 SimulateProgressScreen(
                     state = state,
-                    // ~1 second per completed match at normal speed; 0 means the
-                    // manager turned animation off, so the list appears at once.
-                    revealDelayMillis = (settings.animationSpeed.multiplier * 1000f).toLong(),
-                    onAdvance = { viewModel.advanceSimulateReveal() },
                     onContinue = { viewModel.finishSimulateReveal() }
                 )
             }

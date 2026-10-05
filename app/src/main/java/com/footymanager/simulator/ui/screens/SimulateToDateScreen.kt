@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,7 +32,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,11 +57,38 @@ import com.footymanager.simulator.ui.components.SectionHeader
 import com.footymanager.simulator.ui.components.StatCell
 import com.footymanager.simulator.ui.theme.StatColors
 import com.footymanager.simulator.viewmodel.SimulateDayResult
+import com.footymanager.simulator.viewmodel.SimulateStatus
 import com.footymanager.simulator.viewmodel.SimulateSummary
 import com.footymanager.simulator.viewmodel.SimulateToDateState
-import kotlinx.coroutines.delay
 
-/** Calendar screen: pick a date between tomorrow and the end of the season. */
+/** Subtle marker colour for a competition, used on the calendar and result cards. */
+private fun competitionColor(competition: CompetitionType): Color = when (competition) {
+    CompetitionType.CHAMPIONS_LEAGUE -> StatColors.elite
+    CompetitionType.EUROPA_LEAGUE -> StatColors.good
+    CompetitionType.CONFERENCE_LEAGUE -> StatColors.average
+    CompetitionType.DOMESTIC_CUP -> StatColors.poor
+    CompetitionType.FRIENDLY -> StatColors.average
+    CompetitionType.LEAGUE -> StatColors.good
+}
+
+/** A one-word marker shown on a day cell so the schedule reads at a glance. */
+private fun competitionMarker(competition: CompetitionType): String = when (competition) {
+    CompetitionType.LEAGUE -> "LG"
+    CompetitionType.DOMESTIC_CUP -> "CUP"
+    CompetitionType.CHAMPIONS_LEAGUE -> "UCL"
+    CompetitionType.EUROPA_LEAGUE -> "UEL"
+    CompetitionType.CONFERENCE_LEAGUE -> "UECL"
+    CompetitionType.FRIENDLY -> "FR"
+}
+
+/**
+ * Calendar screen: pick a date between tomorrow and the end of the season.
+ *
+ * Every day the user's club plays on is marked with a small competition tag, and
+ * the visible month's fixtures are listed in full above the grid, so the whole
+ * run-in is legible without tapping anything. The competition text is read from
+ * each fixture, never hard-coded.
+ */
 @Composable
 fun SimulateToDateScreen(
     career: Career,
@@ -74,16 +98,24 @@ fun SimulateToDateScreen(
     val today = career.date
     val horizon = career.simulateHorizon()
     val earliest = today.plusDays(1)
+    val userClubId = career.userClubId
 
     var visibleMonth by remember { mutableStateOf(earliest.month) }
     var visibleYear by remember { mutableStateOf(earliest.year) }
     var selected by remember { mutableStateOf<GameDate?>(null) }
     var confirming by remember { mutableStateOf(false) }
 
-    val monthFixtures = remember(career.fixtures, visibleMonth, visibleYear) {
+    val monthFixtures = remember(career.fixtures, visibleMonth, visibleYear, userClubId) {
         career.fixtures
             .filter { it.date?.year == visibleYear && it.date?.month == visibleMonth }
             .groupBy { it.date!! }
+    }
+    val monthUserFixtures = remember(career.fixtures, visibleMonth, visibleYear, userClubId) {
+        career.fixtures
+            .filter {
+                it.involves(userClubId) && it.date?.year == visibleYear && it.date?.month == visibleMonth
+            }
+            .sortedWith(compareBy({ it.date?.year ?: 9999 }, { it.date?.month ?: 12 }, { it.date?.day ?: 31 }))
     }
 
     val monthLabel = "${GameDate.MONTH_NAMES[visibleMonth - 1]} $visibleYear"
@@ -140,32 +172,22 @@ fun SimulateToDateScreen(
 
         item {
             FmCard(padding = 12.dp) {
-                // ---- Month navigation ----
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    MonthArrow(
-                        forward = false,
-                        enabled = canStepBack,
-                        onClick = { stepMonth(-1) }
-                    )
+                    MonthArrow(forward = false, enabled = canStepBack, onClick = { stepMonth(-1) })
                     Text(
                         text = monthLabel,
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold
                     )
-                    MonthArrow(
-                        forward = true,
-                        enabled = canStepForward,
-                        onClick = { stepMonth(1) }
-                    )
+                    MonthArrow(forward = true, enabled = canStepForward, onClick = { stepMonth(1) })
                 }
                 Spacer(Modifier.height(10.dp))
 
-                // ---- Weekday header ----
                 Row(modifier = Modifier.fillMaxWidth()) {
                     GameDate.DAY_NAMES.forEach { day ->
                         Text(
@@ -179,15 +201,16 @@ fun SimulateToDateScreen(
                 }
                 Spacer(Modifier.height(6.dp))
 
-                // ---- Day grid ----
                 cells.chunked(7).forEach { week ->
                     Row(modifier = Modifier.fillMaxWidth()) {
                         week.forEach { day ->
                             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                 if (day == null) {
-                                    Spacer(Modifier.size(40.dp))
+                                    Spacer(Modifier.size(44.dp))
                                 } else {
                                     val date = GameDate(visibleYear, visibleMonth, day)
+                                    val dayUserFixtures = (monthFixtures[date] ?: emptyList())
+                                        .filter { it.involves(userClubId) }
                                     CalendarDay(
                                         date = date,
                                         today = today,
@@ -195,6 +218,7 @@ fun SimulateToDateScreen(
                                         earliest = earliest,
                                         selected = selected == date,
                                         matchCount = monthFixtures[date]?.size ?: 0,
+                                        userFixtures = dayUserFixtures,
                                         onClick = { selected = date }
                                     )
                                 }
@@ -202,7 +226,7 @@ fun SimulateToDateScreen(
                         }
                         if (week.size < 7) {
                             repeat(7 - week.size) {
-                                Box(modifier = Modifier.weight(1f)) { Spacer(Modifier.size(40.dp)) }
+                                Box(modifier = Modifier.weight(1f)) { Spacer(Modifier.size(44.dp)) }
                             }
                         }
                     }
@@ -215,8 +239,8 @@ fun SimulateToDateScreen(
             if (chosen == null) {
                 FmCard {
                     Text(
-                        text = "Tap a date to see its fixtures. You can simulate to any day " +
-                            "from tomorrow up to the end of the season.",
+                        text = "Tap a date to see the full fixture list. You can simulate to any " +
+                            "day from tomorrow up to the end of the season.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -268,7 +292,7 @@ fun SimulateToDateScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "$count matches will be simulated.",
+                        text = "$count matches will be simulated across every competition.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -289,6 +313,19 @@ fun SimulateToDateScreen(
             }
         }
 
+        // ---- The user's fixtures for the visible month, listed up front ----
+        if (monthUserFixtures.isNotEmpty()) {
+            item {
+                FmCard(padding = 12.dp, accent = MaterialTheme.colorScheme.primary) {
+                    SectionHeader("YOUR FIXTURES · $monthLabel")
+                    Spacer(Modifier.height(8.dp))
+                    monthUserFixtures.forEach { match ->
+                        UserFixtureLine(career = career, match = match)
+                    }
+                }
+            }
+        }
+
         item {
             FmSecondaryButton(text = "Back", onClick = onBack)
         }
@@ -302,8 +339,7 @@ private fun MonthArrow(forward: Boolean, enabled: Boolean, onClick: () -> Unit) 
             .size(40.dp)
             .clip(CircleShape)
             .background(
-                if (enabled) MaterialTheme.colorScheme.surfaceVariant
-                else Color.Transparent
+                if (enabled) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
             )
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -326,13 +362,18 @@ private fun CalendarDay(
     earliest: GameDate,
     selected: Boolean,
     matchCount: Int,
+    userFixtures: List<Match>,
     onClick: () -> Unit
 ) {
     val isToday = date == today
     val selectable = !date.isBefore(earliest) && !date.isAfter(horizon)
+    val hasUserMatch = userFixtures.isNotEmpty()
+    val marker = userFixtures.minByOrNull { it.competition.ordinal }
+    val markerColor = marker?.let { competitionColor(it.competition) } ?: MaterialTheme.colorScheme.primary
     val background = when {
         selected -> MaterialTheme.colorScheme.primary
-        isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        hasUserMatch -> markerColor.copy(alpha = 0.16f)
+        isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
         else -> Color.Transparent
     }
     val textColor = when {
@@ -345,13 +386,17 @@ private fun CalendarDay(
     Column(
         modifier = Modifier
             .padding(2.dp)
-            .size(40.dp)
+            .size(44.dp)
             .clip(MaterialTheme.shapes.small)
             .background(background)
             .then(
-                if (isToday && !selected) {
-                    Modifier.border(1.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small)
-                } else Modifier
+                when {
+                    hasUserMatch && !selected ->
+                        Modifier.border(1.dp, markerColor, MaterialTheme.shapes.small)
+                    isToday && !selected ->
+                        Modifier.border(1.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small)
+                    else -> Modifier
+                }
             )
             .clickable(enabled = selectable, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -360,21 +405,67 @@ private fun CalendarDay(
         Text(
             text = "${date.day}",
             style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (isToday || selected) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (isToday || selected || hasUserMatch) FontWeight.Bold else FontWeight.Normal,
             color = textColor
         )
-        if (matchCount > 0 && selectable) {
+        if (hasUserMatch && marker != null) {
+            Text(
+                text = competitionMarker(marker.competition),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else markerColor,
+                maxLines = 1
+            )
+        } else if (matchCount > 0 && selectable) {
             Box(
                 modifier = Modifier
                     .padding(top = 2.dp)
-                    .size(5.dp)
+                    .size(4.dp)
                     .clip(CircleShape)
-                    .background(
-                        if (selected) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.primary
-                    )
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
             )
         }
+    }
+}
+
+/** A compact "date · vs Opponent · competition" line for the user's fixtures. */
+@Composable
+private fun UserFixtureLine(career: Career, match: Match) {
+    val isHome = match.isHomeFor(career.userClubId)
+    val opponent = career.club(match.opponentOf(career.userClubId))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(30.dp)
+                .clip(MaterialTheme.shapes.extraSmall)
+                .background(competitionColor(match.competition))
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = match.competition.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = "${match.date?.numeric() ?: "—"} · ${if (isHome) "vs" else "at"} ${opponent?.name ?: "-"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            text = if (isHome) "H" else "A",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -382,6 +473,7 @@ private fun CalendarDay(
 private fun FixtureLine(career: Career, match: Match) {
     val home = career.club(match.homeClubId)
     val away = career.club(match.awayClubId)
+    val userInvolved = match.involves(career.userClubId)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -405,21 +497,13 @@ private fun FixtureLine(career: Career, match: Match) {
             Text(
                 text = "${home?.name ?: "-"} vs ${away?.name ?: "-"}",
                 style = MaterialTheme.typography.bodySmall,
+                fontWeight = if (userInvolved) FontWeight.Bold else FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
     }
-}
-
-private fun competitionColor(competition: CompetitionType): Color = when (competition) {
-    CompetitionType.CHAMPIONS_LEAGUE -> StatColors.elite
-    CompetitionType.EUROPA_LEAGUE -> StatColors.good
-    CompetitionType.CONFERENCE_LEAGUE -> StatColors.average
-    CompetitionType.DOMESTIC_CUP -> StatColors.poor
-    CompetitionType.FRIENDLY -> StatColors.average
-    CompetitionType.LEAGUE -> StatColors.good
 }
 
 /** Confirmation dialog content, shown before any simulation begins. */
@@ -459,41 +543,24 @@ fun SimulateConfirmCard(
                 FmSecondaryButton(text = "Cancel", onClick = onCancel)
             }
             Box(modifier = Modifier.weight(1f)) {
-                FmPrimaryButton(
-                    text = "Confirm",
-                    onClick = onConfirm,
-                    icon = Icons.Filled.Check
-                )
+                FmPrimaryButton(text = "Confirm", onClick = onConfirm, icon = Icons.Filled.Check)
             }
         }
     }
 }
 
 /**
- * The animated progress screen. The whole run has already been computed; this
- * reveals the completed results one at a time at roughly a match per second.
+ * The progress screen. The world is simulated one matchday at a time by the view
+ * model; this reveals only the user's own results as they arrive and keeps a
+ * compact live panel showing where the club stands domestically and in Europe.
+ * The progress bar tracks matchdays actually played, not matches revealed.
  */
 @Composable
 fun SimulateProgressScreen(
     state: SimulateToDateState,
-    revealDelayMillis: Long,
-    onAdvance: () -> Unit,
     onContinue: () -> Unit
 ) {
-    val revealCount = state.currentIndex.coerceAtMost(state.total)
-    val visibleResults = state.results.take(revealCount)
-
-    LaunchedEffect(state.currentIndex, state.finished, revealDelayMillis) {
-        if (!state.finished && state.currentIndex < state.total) {
-            if (revealDelayMillis <= 0L) {
-                // "Animation speed: off" means show the finished list immediately.
-                onContinue()
-            } else {
-                delay(revealDelayMillis)
-                onAdvance()
-            }
-        }
-    }
+    val visibleResults = state.results.take(state.currentIndex.coerceAtMost(state.total))
 
     Column(
         modifier = Modifier
@@ -501,28 +568,27 @@ fun SimulateProgressScreen(
             .padding(16.dp)
     ) {
         ScreenTitle(
-            if (state.finished) "Simulation complete" else "Simulating…",
+            if (state.finished) "Simulation complete" else "Simulating to ${state.toDate.display()}",
             "${state.fromDate.numeric()} → ${state.toDate.numeric()}"
         )
 
         Spacer(Modifier.height(10.dp))
 
-        val progress = if (state.total == 0) 1f else revealCount.toFloat() / state.total
         val animatedProgress by animateFloatAsState(
-            targetValue = progress,
-            animationSpec = tween(400),
+            targetValue = state.progressFraction,
+            animationSpec = tween(300),
             label = "simProgress"
         )
         FmCard(padding = 12.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "$revealCount / ${state.total}",
+                    text = "${state.matchdaysDone} / ${state.matchdaysTotal} matchdays",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = if (state.finished) "Done" else "Matches played",
+                    text = "${state.matchesSimulated} / ${state.totalMatches} fixtures",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -545,7 +611,22 @@ fun SimulateProgressScreen(
             }
         }
 
+        state.status?.let { status ->
+            Spacer(Modifier.height(10.dp))
+            StatusPanel(status)
+        }
+
         Spacer(Modifier.height(10.dp))
+
+        if (visibleResults.isEmpty() && !state.finished) {
+            FmCard {
+                Text(
+                    text = "Simulating the season… your club's results will appear here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
 
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -559,6 +640,67 @@ fun SimulateProgressScreen(
         if (state.finished) {
             Spacer(Modifier.height(10.dp))
             FmPrimaryButton(text = "CONTINUE", onClick = onContinue)
+        } else {
+            Spacer(Modifier.height(10.dp))
+            FmSecondaryButton(text = "SKIP ANIMATION", onClick = onContinue)
+        }
+    }
+}
+
+/** Compact live standings while the season runs. */
+@Composable
+private fun StatusPanel(status: SimulateStatus) {
+    FmCard(padding = 12.dp) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "DOMESTIC",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = status.domesticLeagueName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = when {
+                        status.domesticChampion != null -> "${status.domesticChampion} — Champions"
+                        status.domesticComplete -> "Season complete"
+                        status.domesticPosition == 0 -> "—"
+                        else -> "Position: ${ordinal(status.domesticPosition)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (status.domesticPosition in 1..4)
+                        StatColors.elite else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "EUROPE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = status.europeanCompetition ?: "—",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (!status.europeanParticipating) "Not participating" else status.europeanDetail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -567,13 +709,9 @@ fun SimulateProgressScreen(
 private fun ResultLine(result: SimulateDayResult) {
     AnimatedVisibility(
         visible = true,
-        enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 2 },
-        exit = fadeOut(tween(120))
+        enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 2 }
     ) {
-        FmCard(
-            padding = 10.dp,
-            accent = if (result.isUserMatch) MaterialTheme.colorScheme.primary else null
-        ) {
+        FmCard(padding = 10.dp, accent = MaterialTheme.colorScheme.primary) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -582,14 +720,23 @@ private fun ResultLine(result: SimulateDayResult) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${result.homeName}  ${result.homeGoals}–${result.awayGoals}  ${result.awayName}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (result.isUserMatch) FontWeight.Bold else FontWeight.Normal,
+                        text = "${if (result.userIsHome) "vs" else "at"} ${result.opponentName}",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                Text(
+                    text = "${result.userGoals}–${result.opponentGoals}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = when (result.outcome) {
+                        1 -> StatColors.good
+                        0 -> StatColors.average
+                        else -> StatColors.bad
+                    }
+                )
             }
         }
     }
@@ -607,7 +754,10 @@ fun SimulateSummaryScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            ScreenTitle("Simulation complete", "${summary.fromDate.numeric()} → ${summary.toDate.numeric()}")
+            ScreenTitle(
+                "Simulation complete",
+                "From ${summary.fromDate.numeric()} to ${summary.toDate.numeric()}"
+            )
         }
 
         item {
@@ -619,9 +769,14 @@ fun SimulateSummaryScreen(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Your record: ${summary.userMatches} played · " +
-                        "${summary.userWins}W ${summary.userDraws}D ${summary.userLosses}L · " +
-                        "${summary.goalsFor} scored, ${summary.goalsAgainst} conceded",
+                    text = "Matches played by your club: ${summary.userMatches}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Record: ${summary.userWins}W ${summary.userDraws}D ${summary.userLosses}L · " +
+                        "Goals: ${summary.goalsFor} for, ${summary.goalsAgainst} against",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -630,13 +785,10 @@ fun SimulateSummaryScreen(
 
         item {
             FmCard(padding = 12.dp) {
-                SectionHeader("League position")
+                SectionHeader(summary.domesticLeagueName)
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    StatCell(
-                        "Before",
-                        if (summary.positionBefore == 0) "—" else "${summary.positionBefore}"
-                    )
+                    StatCell("Before", if (summary.positionBefore == 0) "—" else ordinal(summary.positionBefore))
                     Text(
                         text = "→",
                         style = MaterialTheme.typography.titleMedium,
@@ -644,27 +796,53 @@ fun SimulateSummaryScreen(
                     )
                     StatCell(
                         "After",
-                        if (summary.positionAfter == 0) "—" else "${summary.positionAfter}",
-                        valueColor = if (summary.positionAfter in 1..4 && summary.positionAfter != 0)
-                            StatColors.elite else null
+                        if (summary.positionAfter == 0) "—" else ordinal(summary.positionAfter),
+                        valueColor = if (summary.positionAfter in 1..4) StatColors.elite else null
+                    )
+                }
+                if (summary.domesticChampion != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "${summary.domesticLeagueName} Winner: ${summary.domesticChampion}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = StatColors.elite
                     )
                 }
             }
         }
 
-        if (summary.continentalNotes.isNotEmpty()) {
-            item {
-                FmCard {
-                    SectionHeader("Europe")
-                    Spacer(Modifier.height(8.dp))
-                    summary.continentalNotes.forEach { note ->
-                        Text(
-                            text = "• $note",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        )
-                    }
+        item {
+            FmCard {
+                SectionHeader("Europe")
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = summary.europeanCompetition ?: "No European competition",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                if (summary.europeanBefore != summary.europeanAfter) {
+                    Text(
+                        text = "${summary.europeanBefore} → ${summary.europeanAfter}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = summary.europeanAfter,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                summary.continentalNotes.forEach { note ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "• $note",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }
@@ -678,7 +856,7 @@ fun SimulateSummaryScreen(
                     StatCell("Balance", Fmt.money(summary.financeAfter))
                     StatCell(
                         "Change",
-                        (if (delta >= 0) "+" else "-") + Fmt.money(kotlin.math.abs(delta)).removePrefix("£").let { "£$it" },
+                        (if (delta >= 0) "+" else "-") + Fmt.money(kotlin.math.abs(delta)),
                         valueColor = if (delta >= 0) StatColors.good else StatColors.bad
                     )
                 }
@@ -687,12 +865,20 @@ fun SimulateSummaryScreen(
 
         item {
             FmCard {
-                SectionHeader("Squad")
+                SectionHeader("Squad & events")
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatCell("Injuries", "${summary.injuries}")
                     StatCell("Suspensions", "${summary.suspensions}")
                     StatCell("Developed", "${summary.developed}", valueColor = StatColors.elite)
+                }
+                if (summary.majorEvents.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = summary.majorEvents.joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -701,4 +887,16 @@ fun SimulateSummaryScreen(
             FmPrimaryButton(text = "CONTINUE", onClick = onContinue)
         }
     }
+}
+
+/** Ordinal helper shared by the progress and summary panels. */
+private fun ordinal(n: Int): String {
+    val suffix = when {
+        n % 100 in 11..13 -> "th"
+        n % 10 == 1 -> "st"
+        n % 10 == 2 -> "nd"
+        n % 10 == 3 -> "rd"
+        else -> "th"
+    }
+    return "$n$suffix"
 }

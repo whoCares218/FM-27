@@ -132,9 +132,13 @@ class SimulateToDateViewModelTest {
         val summary = vm.simulateToDate.value!!.summary
         assertNotNull("A summary should be produced", summary)
         assertEquals(
-            "The record must add up",
-            summary!!.matchesSimulated,
+            "The summary must count the user's revealed matches",
+            summary!!.userMatches,
             vm.simulateToDate.value!!.total
+        )
+        assertTrue(
+            "The whole world must be simulated, not just the user's matches",
+            summary.matchesSimulated >= summary.userMatches
         )
         assertEquals(
             "User results must partition into wins, draws and losses",

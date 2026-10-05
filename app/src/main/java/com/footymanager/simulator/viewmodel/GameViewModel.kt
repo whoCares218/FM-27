@@ -12,6 +12,9 @@ import com.footymanager.simulator.domain.data.SaveRepository
 import com.footymanager.simulator.domain.data.SettingsRepository
 import com.footymanager.simulator.domain.data.SettingsStore
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
+import com.footymanager.simulator.domain.engine.CompetitionStatus
+import com.footymanager.simulator.domain.engine.DomesticStatus
+import com.footymanager.simulator.domain.engine.EuropeanStatus
 import com.footymanager.simulator.domain.engine.CupEngine
 import com.footymanager.simulator.domain.engine.AiManager
 import com.footymanager.simulator.domain.engine.FinanceEngine
@@ -88,7 +91,11 @@ data class MatchFeedItem(
     val isUserClub: Boolean
 )
 
-/** One completed match in the simulate-to-date animation feed. */
+/**
+ * One completed match in the simulate-to-date animation feed. Only the user's
+ * club's matches are fed to the animation; the rest of the world is simulated
+ * silently and surfaced through the tables and the progress counters.
+ */
 data class SimulateDayResult(
     val matchId: Long,
     val date: GameDate,
@@ -99,13 +106,40 @@ data class SimulateDayResult(
     val awayName: String,
     val homeGoals: Int,
     val awayGoals: Int,
-    val isUserMatch: Boolean
+    val isUserMatch: Boolean,
+    val userClubId: Long
+) {
+    val userIsHome: Boolean get() = homeClubId == userClubId
+    val opponentName: String get() = if (userIsHome) awayName else homeName
+    val userGoals: Int get() = if (userIsHome) homeGoals else awayGoals
+    val opponentGoals: Int get() = if (userIsHome) awayGoals else homeGoals
+
+    /** 1 for a win, 0 for a draw, -1 for a defeat. */
+    val outcome: Int get() = when {
+        userGoals > opponentGoals -> 1
+        userGoals == opponentGoals -> 0
+        else -> -1
+    }
+}
+
+/** A compact snapshot of where the user's club stands while the world runs. */
+data class SimulateStatus(
+    val domesticLeagueName: String,
+    val domesticPosition: Int,
+    val domesticComplete: Boolean,
+    val domesticChampion: String?,
+    /** Label of the continental competition the club is in, or null. */
+    val europeanCompetition: String?,
+    /** "Position: 11th", "Round of 16", "Eliminated — Quarter-Final", "Winner"… */
+    val europeanDetail: String,
+    val europeanParticipating: Boolean
 )
 
 /** The post-simulation report shown once the calendar catches up to the target. */
 data class SimulateSummary(
     val fromDate: GameDate,
     val toDate: GameDate,
+    /** Every match played across the whole football world. */
     val matchesSimulated: Int,
     val userMatches: Int,
     val userWins: Int,
@@ -115,11 +149,18 @@ data class SimulateSummary(
     val goalsAgainst: Int,
     val positionBefore: Int,
     val positionAfter: Int,
+    val domesticLeagueName: String,
+    val domesticComplete: Boolean,
+    val domesticChampion: String?,
+    val europeanCompetition: String?,
+    val europeanBefore: String,
+    val europeanAfter: String,
     val financeBefore: Long,
     val financeAfter: Long,
     val injuries: Int,
     val suspensions: Int,
     val developed: Int,
+    val majorEvents: List<String>,
     val continentalNotes: List<String>
 )
 
@@ -127,12 +168,27 @@ data class SimulateSummary(
 data class SimulateToDateState(
     val fromDate: GameDate,
     val toDate: GameDate,
+    /** The user's matches, appended as each matchday is played. */
     val results: List<SimulateDayResult>,
+    /** How many of [results] are on screen (always equal once revealed). */
     val total: Int,
     val currentIndex: Int,
     val finished: Boolean,
-    val summary: SimulateSummary? = null
-)
+    val summary: SimulateSummary? = null,
+    /** Real simulation progress, one matchday at a time. */
+    val matchdaysDone: Int = 0,
+    val matchdaysTotal: Int = 0,
+    val matchesSimulated: Int = 0,
+    val totalMatches: Int = 0,
+    val status: SimulateStatus? = null
+) {
+    val progressFraction: Float
+        get() = when {
+            matchdaysTotal <= 0 -> if (finished) 1f else 0f
+            else -> (matchdaysDone.toFloat() / matchdaysTotal).coerceIn(0f, 1f)
+        }
+}
+
 
 /**
  * Transient state for the match-day experience.
@@ -278,6 +334,13 @@ class GameViewModel(
 
     /** The coroutine driving the live match clock. */
     private var engineJob: Job? = null
+
+    /** The coroutine driving a simulate-to-date run, so it can be cancelled. */
+    private var simulateJob: Job? = null
+
+    /** Set when the manager skips the paced reveal; the run itself still finishes. */
+    @Volatile
+    private var revealSkipped = false
 
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
@@ -1500,6 +1563,14 @@ class GameViewModel(
         (settings.value.animationSpeed.multiplier * 1000f).toLong().coerceAtLeast(60L)
 
     /**
+     * How long each of the user's simulated results is held on screen. About one
+     * second at normal speed, scaled by the manager's animation-speed setting and
+     * floored so "off" still shows the results long enough to read.
+     */
+    private fun revealDelayMillis(): Long =
+        (settings.value.animationSpeed.multiplier * 1000f).toLong().coerceAtLeast(120L)
+
+    /**
      * Instant quick-sim: prepares and fully simulates the next fixture in one
      * step, then advances the week. Used for internal/test flows; the player-facing
      * Quick Sim runs the live engine in compressed form instead.
@@ -1548,10 +1619,14 @@ class GameViewModel(
     }
 
     /**
-     * Simulates every fixture up to [target]. The whole run is computed in one
-     * background pass and the completed results are then revealed to the caller
-     * one at a time through [simulateToDate], so the UI can animate the world
-     * progressing while the heavy work happens up front.
+     * Simulates the world forward to [target] one matchday at a time.
+     *
+     * Each matchday is simulated off the main thread, the resulting career is
+     * persisted immediately as a checkpoint, and only the user's own results are
+     * appended to the animation feed. Because every week is committed as it is
+     * played, an interruption (a crash, the app being closed, a kill) leaves a
+     * fully consistent save with no half-applied results and no duplicate
+     * fixtures; the manager simply carries on from the last checkpoint.
      */
     fun startSimulateToDate(target: GameDate) {
         val career = _career.value ?: return
@@ -1569,78 +1644,200 @@ class GameViewModel(
         val positionBefore = career.userLeaguePosition
         val financeBefore = career.userClub.balance
         val seasonNumberBefore = career.seasonNumber
+        val domesticBefore = CompetitionStatus.domesticStatus(career, career.userClubId)
+        val europeanBefore = CompetitionStatus.europeanStatus(career, career.userClubId)
+        val totalMatches = SimulateToDateEngine.countMatches(career, target)
+        val matchdaysTotal = expectedMatchdays(career, target)
+        val startMatchday = career.matchdayIndex
 
-        viewModelScope.launch {
-            _isBusy.value = true
+        simulateJob?.cancel()
+        revealSkipped = false
+        simulateJob = viewModelScope.launch {
+            val rng = rngFor(career)
+            var working = career
+            var seasonTurnedOver = false
+            var matchesSimulated = 0
+            val feed = mutableListOf<SimulateDayResult>()
+
+            _simulateToDate.value = SimulateToDateState(
+                fromDate = fromDate,
+                toDate = target,
+                results = emptyList(),
+                total = 0,
+                currentIndex = 0,
+                finished = false,
+                matchdaysDone = 0,
+                matchdaysTotal = matchdaysTotal,
+                matchesSimulated = 0,
+                totalMatches = totalMatches,
+                status = statusOf(working)
+            )
+
             try {
-                val collected = mutableListOf<SimulateDayResult>()
-                val updated = withContext(Dispatchers.Default) {
-                    SimulateToDateEngine.simulateThrough(career, target, rngFor(career)) { result ->
-                        collected += SimulateDayResult(
+                var guard = 0
+                while (!working.date.isAfter(target) && guard < 80) {
+                    guard++
+                    val before = working
+                    val week = withContext(Dispatchers.Default) {
+                        SimulateToDateEngine.simulateOneWeek(before, target, rng)
+                    }
+                    if (week.matchdaysAdvanced == 0) break
+                    working = week.career
+                    if (working.seasonNumber != seasonNumberBefore) seasonTurnedOver = true
+                    matchesSimulated += week.results.size
+
+                    // Commit the week immediately: this is the simulation checkpoint.
+                    _career.value = working
+                    persist(working)
+
+                    val userResults = week.results.filter { it.isUserMatch }.map { result ->
+                        SimulateDayResult(
                             matchId = result.matchId,
                             date = result.date,
                             competitionLabel = result.competitionLabel,
                             homeClubId = result.homeClubId,
                             awayClubId = result.awayClubId,
-                            homeName = career.club(result.homeClubId)?.name ?: "-",
-                            awayName = career.club(result.awayClubId)?.name ?: "-",
+                            homeName = before.club(result.homeClubId)?.name ?: "-",
+                            awayName = before.club(result.awayClubId)?.name ?: "-",
                             homeGoals = result.homeGoals,
                             awayGoals = result.awayGoals,
-                            isUserMatch = result.isUserMatch
+                            isUserMatch = true,
+                            userClubId = before.userClubId
                         )
+                    }
+                    feed += userResults
+
+                    val done = (working.matchdayIndex - startMatchday)
+                        .coerceIn(0, matchdaysTotal)
+                    _simulateToDate.value = SimulateToDateState(
+                        fromDate = fromDate,
+                        toDate = target,
+                        results = feed.toList(),
+                        total = feed.size,
+                        currentIndex = feed.size,
+                        finished = false,
+                        matchdaysDone = done,
+                        matchdaysTotal = matchdaysTotal,
+                        matchesSimulated = matchesSimulated,
+                        totalMatches = totalMatches,
+                        status = statusOf(working)
+                    )
+
+                    // Pace the reveal: hold each of the user's results on screen for
+                    // its moment before the next week is played.
+                    if (userResults.isNotEmpty() && !revealSkipped) {
+                        delay(revealDelayMillis() * userResults.size)
                     }
                 }
 
-                _career.value = updated
-                persist(updated)
+                if (working.matchdayIndex >= working.totalMatchdays()) {
+                    working = working.copy(phase = GamePhase.SEASON_ENDED)
+                }
+                if (working.date.isAfter(target)) working = working.copy(date = target)
 
-                val summary = buildSimulateSummary(
-                    career = career,
-                    updated = updated,
-                    fromDate = fromDate,
-                    toDate = target,
-                    results = collected,
-                    positionBefore = positionBefore,
-                    financeBefore = financeBefore,
-                    seasonTurnedOver = updated.seasonNumber != seasonNumberBefore
-                )
+                _career.value = working
+                persist(working)
 
                 _simulateToDate.value = SimulateToDateState(
                     fromDate = fromDate,
                     toDate = target,
-                    results = collected,
-                    total = collected.size,
-                    currentIndex = 0,
-                    finished = false,
-                    summary = summary
+                    results = feed.toList(),
+                    total = feed.size,
+                    currentIndex = feed.size,
+                    finished = true,
+                    summary = buildSimulateSummary(
+                        career = career,
+                        updated = working,
+                        fromDate = fromDate,
+                        toDate = target,
+                        userResults = feed,
+                        matchesSimulated = matchesSimulated,
+                        positionBefore = positionBefore,
+                        financeBefore = financeBefore,
+                        domesticBefore = domesticBefore,
+                        europeanBefore = europeanBefore,
+                        seasonTurnedOver = seasonTurnedOver
+                    ),
+                    matchdaysDone = matchdaysTotal,
+                    matchdaysTotal = matchdaysTotal,
+                    matchesSimulated = matchesSimulated,
+                    totalMatches = totalMatches,
+                    status = statusOf(working)
                 )
             } catch (t: Throwable) {
-                _message.value = "The simulation could not be completed. Please try again."
-            } finally {
-                _isBusy.value = false
+                // The checkpoint after the last completed week is already saved, so
+                // the career stays consistent even if this run is interrupted.
+                _message.value = "The simulation stopped early. Your progress up to the last week is saved."
+                val current = _simulateToDate.value
+                if (current != null && !current.finished) {
+                    _simulateToDate.value = current.copy(
+                        finished = true,
+                        summary = buildSimulateSummary(
+                            career = career,
+                            updated = working,
+                            fromDate = fromDate,
+                            toDate = target,
+                            userResults = feed,
+                            matchesSimulated = matchesSimulated,
+                            positionBefore = positionBefore,
+                            financeBefore = financeBefore,
+                            domesticBefore = domesticBefore,
+                            europeanBefore = europeanBefore,
+                            seasonTurnedOver = seasonTurnedOver
+                        )
+                    )
+                }
             }
         }
+    }
+
+    /**
+     * How many matchdays the run to [target] will play. The loop advances a week at
+     * a time while the calendar is not past the target, so the count is the number
+     * of whole weeks within the window, capped by what the season has left.
+     */
+    private fun expectedMatchdays(career: Career, target: GameDate): Int {
+        val days = career.date.daysUntil(target).coerceAtLeast(1)
+        val weeks = days / 7 + 1
+        return weeks
+            .coerceAtMost(SimulateToDateEngine.remainingMatchdays(career))
+            .coerceAtLeast(1)
+    }
+
+    private fun statusOf(career: Career): SimulateStatus {
+        val domestic = CompetitionStatus.domesticStatus(career, career.userClubId)
+        val european = CompetitionStatus.europeanStatus(career, career.userClubId)
+        return SimulateStatus(
+            domesticLeagueName = domestic.leagueName,
+            domesticPosition = domestic.position,
+            domesticComplete = domestic.complete,
+            domesticChampion = domestic.championName,
+            europeanCompetition = european.competition?.label,
+            europeanDetail = european.detail,
+            europeanParticipating = european.participating
+        )
     }
 
     /** Advances the reveal animation by one completed match. */
     fun advanceSimulateReveal() {
         val state = _simulateToDate.value ?: return
         if (state.finished) return
-        val next = state.currentIndex + 1
-        _simulateToDate.value = state.copy(
-            currentIndex = next,
-            finished = next >= state.total
-        )
+        val next = (state.currentIndex + 1).coerceAtMost(state.total)
+        _simulateToDate.value = state.copy(currentIndex = next)
     }
 
-    /** Skips straight to the end of the reveal, for the impatient manager. */
+    /** Skips the paced reveal; the run itself continues and still finishes. */
     fun finishSimulateReveal() {
+        revealSkipped = true
         val state = _simulateToDate.value ?: return
-        _simulateToDate.value = state.copy(currentIndex = state.total, finished = true)
+        if (state.finished) return
+        _simulateToDate.value = state.copy(currentIndex = state.total)
     }
 
     /** Dismisses the simulate-to-date screen. */
     fun clearSimulateToDate() {
+        simulateJob?.cancel()
+        simulateJob = null
         _simulateToDate.value = null
     }
 
@@ -1649,12 +1846,14 @@ class GameViewModel(
         updated: Career,
         fromDate: GameDate,
         toDate: GameDate,
-        results: List<SimulateDayResult>,
+        userResults: List<SimulateDayResult>,
+        matchesSimulated: Int,
         positionBefore: Int,
         financeBefore: Long,
+        domesticBefore: DomesticStatus,
+        europeanBefore: EuropeanStatus,
         seasonTurnedOver: Boolean
     ): SimulateSummary {
-        val userResults = results.filter { it.isUserMatch }
         val clubId = career.userClubId
         var wins = 0
         var draws = 0
@@ -1662,9 +1861,8 @@ class GameViewModel(
         var goalsFor = 0
         var goalsAgainst = 0
         for (r in userResults) {
-            val isHome = r.homeClubId == clubId
-            val gf = if (isHome) r.homeGoals else r.awayGoals
-            val ga = if (isHome) r.awayGoals else r.homeGoals
+            val gf = r.userGoals
+            val ga = r.opponentGoals
             goalsFor += gf
             goalsAgainst += ga
             when {
@@ -1683,38 +1881,31 @@ class GameViewModel(
             before != null && p.overall > before.overall
         }
 
-        val notes = mutableListOf<String>()
-        for (competition in listOf(
-            CompetitionType.CHAMPIONS_LEAGUE,
-            CompetitionType.EUROPA_LEAGUE,
-            CompetitionType.CONFERENCE_LEAGUE
-        )) {
-            val state = updated.europeanState(competition)
-            if (!state.active) continue
-            val userIn = state.participantIds.contains(clubId)
-            if (!userIn) continue
-            val position = state.positionOf(clubId)
-            val note = when {
-                state.winnerClubId == clubId -> "${competition.label}: winners"
-                state.ties.isNotEmpty() -> "${competition.label}: knockout phase reached"
-                state.sortedTable().size >= 8 && position in 1..8 ->
-                    "${competition.label}: position $position — direct to the Round of 16"
-                state.sortedTable().size >= 24 && position in 9..24 ->
-                    "${competition.label}: position $position — knockout play-off"
-                position > 0 -> "${competition.label}: position $position"
-                else -> "${competition.label}: in progress"
-            }
-            notes += note
-        }
+        val domesticAfter = CompetitionStatus.domesticStatus(updated, clubId)
+        val europeanAfter = CompetitionStatus.europeanStatus(updated, clubId)
 
-        if (seasonTurnedOver) {
-            notes += "Season ${updated.season} has begun."
+        val notes = mutableListOf<String>()
+        if (europeanAfter.participating) {
+            val label = europeanAfter.competition?.label ?: "Europe"
+            notes += "$label: ${europeanAfter.detail}"
+        } else if (europeanBefore.participating) {
+            val label = europeanBefore.competition?.label ?: "Europe"
+            notes += "$label: no longer in the competition"
         }
+        if (seasonTurnedOver) notes += "Season ${updated.season} has begun."
+
+        val majorEvents = mutableListOf<String>()
+        val injuryDelta = (injuredNow - injuredBefore).coerceAtLeast(0)
+        val suspensionDelta = (suspendedNow - suspendedBefore).coerceAtLeast(0)
+        if (injuryDelta > 0) majorEvents += "$injuryDelta injur${if (injuryDelta == 1) "y" else "ies"}"
+        if (suspensionDelta > 0) majorEvents += "$suspensionDelta suspension${if (suspensionDelta == 1) "" else "s"}"
+        if (developed > 0) majorEvents += "$developed player development increase${if (developed == 1) "" else "s"}"
+        if (seasonTurnedOver) majorEvents += "season rollover"
 
         return SimulateSummary(
             fromDate = fromDate,
             toDate = toDate,
-            matchesSimulated = results.size,
+            matchesSimulated = matchesSimulated,
             userMatches = userResults.size,
             userWins = wins,
             userDraws = draws,
@@ -1723,11 +1914,19 @@ class GameViewModel(
             goalsAgainst = goalsAgainst,
             positionBefore = positionBefore,
             positionAfter = updated.userLeaguePosition,
+            domesticLeagueName = domesticAfter.leagueName,
+            domesticComplete = domesticAfter.complete,
+            domesticChampion = domesticAfter.championName,
+            europeanCompetition = europeanAfter.competition?.label
+                ?: europeanBefore.competition?.label,
+            europeanBefore = europeanBefore.detail,
+            europeanAfter = europeanAfter.detail,
             financeBefore = financeBefore,
             financeAfter = updated.userClub.balance,
-            injuries = (injuredNow - injuredBefore).coerceAtLeast(0),
-            suspensions = (suspendedNow - suspendedBefore).coerceAtLeast(0),
+            injuries = injuryDelta,
+            suspensions = suspensionDelta,
             developed = developed,
+            majorEvents = majorEvents,
             continentalNotes = notes
         )
     }
