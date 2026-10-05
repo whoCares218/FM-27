@@ -9,19 +9,30 @@ import kotlin.random.Random
  * Assigns a real calendar date to every fixture.
  *
  * The season is organised into weekly rounds. Each round has a domestic league
- * matchday; on a handful of designated rounds a Champions League matchday also
- * falls in the same week, which is what produces the familiar midweek European
- * fixture followed by a weekend league game.
+ * matchday; on a handful of designated rounds a continental matchday also falls in
+ * the same week, which is what produces the familiar midweek European fixture
+ * followed by a weekend league game.
  *
- * Dates are derived from the round number rather than stored randomly, so the
- * schedule is stable, readable and easy to test.
+ * Every function here is anchored to a season start date. Season 1 begins on
+ * [SEASON_START]; each later campaign begins one year later, so a fixture's date
+ * is always relative to its own season rather than to a single global constant.
+ * Passing a per-season start is what keeps the calendar correct across career
+ * rollover: with a fixed anchor, a season-2 fixture would be dated in season 1 and
+ * the whole schedule would sit in the past.
  */
 object SeasonCalendar {
 
     /** The season starts on the second Saturday of August 2026. */
     val SEASON_START = GameDate(2026, 8, 8)
 
-    /** Rounds that also carry a Champions League matchday (midweek, Tue/Wed). */
+    /** A season's campaign is 52 weeks long (364 days), keeping the same weekday. */
+    const val DAYS_PER_SEASON = 364
+
+    /** The start date of the campaign with the given 1-based season number. */
+    fun seasonStart(seasonNumber: Int): GameDate =
+        SEASON_START.plusDays((seasonNumber.coerceAtLeast(1) - 1) * DAYS_PER_SEASON)
+
+    /** Rounds that also carry a continental matchday (midweek, Tue/Wed). */
     private val uclRounds = setOf(2, 4, 6, 8, 10, 12, 14, 16)
 
     /** The domestic rounds on which each UCL league-phase matchday is played. */
@@ -56,52 +67,66 @@ object SeasonCalendar {
      *
      * @param fixtures every fixture for the season
      * @param random used only for the small home/away kick-off day variation
+     * @param seasonStart the first day of the campaign the fixtures belong to
      */
-    fun assignDates(fixtures: List<Match>, random: Random): List<Match> {
+    fun assignDates(
+        fixtures: List<Match>,
+        random: Random,
+        seasonStart: GameDate = SEASON_START
+    ): List<Match> {
         return fixtures.map { match ->
             val date = when (match.competition) {
-                CompetitionType.LEAGUE -> leagueDate(match.matchday)
+                CompetitionType.LEAGUE -> leagueDate(match.matchday, seasonStart)
                 CompetitionType.CHAMPIONS_LEAGUE, CompetitionType.EUROPA_LEAGUE,
                 CompetitionType.CONFERENCE_LEAGUE ->
-                    if (match.tieId != null) knockoutDate(match.matchday)
-                    else europeanLeaguePhaseDate(match.competition, match.competitionRound.coerceAtLeast(1))
-                CompetitionType.DOMESTIC_CUP -> cupDate(match.competitionRound.coerceAtLeast(1))
-                CompetitionType.FRIENDLY -> leagueDate(match.matchday).plusDays(-3)
+                    if (match.tieId != null) knockoutDate(match.matchday, seasonStart)
+                    else europeanLeaguePhaseDate(
+                        match.competition,
+                        match.competitionRound.coerceAtLeast(1),
+                        seasonStart
+                    )
+                CompetitionType.DOMESTIC_CUP -> cupDate(match.competitionRound.coerceAtLeast(1), seasonStart)
+                CompetitionType.FRIENDLY -> leagueDate(match.matchday, seasonStart).plusDays(-3)
             }
             match.copy(date = date)
         }
     }
 
     /** Domestic league matchday N lands on a Saturday, one week apart. */
-    fun leagueDate(matchday: Int): GameDate =
-        SEASON_START.plusDays((matchday - 1) * 7)
+    fun leagueDate(matchday: Int, seasonStart: GameDate = SEASON_START): GameDate =
+        seasonStart.plusDays((matchday - 1) * 7)
 
     /**
-     * The Nth Champions League league-phase matchday sits midweek in the week of
-     * its designated domestic round, so it never clashes with a league game.
+     * The Nth continental league-phase matchday sits midweek in the week of its
+     * designated domestic round, so it never clashes with a league game.
      */
-    fun uclLeaguePhaseDate(uclMatchday: Int): GameDate {
+    fun uclLeaguePhaseDate(uclMatchday: Int, seasonStart: GameDate = SEASON_START): GameDate {
         val round = uclRounds.toList().sorted().getOrElse(uclMatchday - 1) {
             // Beyond the eight designated rounds, keep spacing sensible.
             uclRounds.max() + (uclMatchday - uclRounds.size) * 3
         }
-        return SEASON_START.plusDays((round - 1) * 7 - 3)
+        return seasonStart.plusDays((round - 1) * 7 - 3)
     }
 
     /** The league-phase date for any continental competition. */
-    fun europeanLeaguePhaseDate(competition: CompetitionType, matchday: Int): GameDate {
+    fun europeanLeaguePhaseDate(
+        competition: CompetitionType,
+        matchday: Int,
+        seasonStart: GameDate = SEASON_START
+    ): GameDate {
         val schedule = europeanRoundSchedule(competition)
         val round = schedule.getOrElse(matchday - 1) {
             schedule.max() + (matchday - schedule.size) * 3
         }
-        return SEASON_START.plusDays((round - 1) * 7 - 3)
+        return seasonStart.plusDays((round - 1) * 7 - 3)
     }
 
     /**
      * Knockout legs sit midweek in the week of their domestic round, so the
      * bracket completes before the league season finishes.
      */
-    fun knockoutDate(matchday: Int): GameDate = leagueDate(matchday).plusDays(-3)
+    fun knockoutDate(matchday: Int, seasonStart: GameDate = SEASON_START): GameDate =
+        leagueDate(matchday, seasonStart).plusDays(-3)
 
     /** The first domestic round that carries a cup tie. */
     private const val CUP_FIRST_ROUND = 5
@@ -110,12 +135,12 @@ object SeasonCalendar {
     fun cupRoundMatchday(round: Int): Int = CUP_FIRST_ROUND + (round - 1) * 2
 
     /** Domestic cup rounds are midweek in the week of their designated round. */
-    fun cupDate(round: Int): GameDate =
-        leagueDate(cupRoundMatchday(round)).plusDays(-3)
+    fun cupDate(round: Int, seasonStart: GameDate = SEASON_START): GameDate =
+        leagueDate(cupRoundMatchday(round), seasonStart).plusDays(-3)
 
     /** The matchday a fixture's date falls in, used to advance the calendar. */
-    fun roundOf(date: GameDate): Int {
-        val days = daysBetween(SEASON_START, date)
+    fun roundOf(date: GameDate, seasonStart: GameDate = SEASON_START): Int {
+        val days = daysBetween(seasonStart, date)
         return days / 7 + 1
     }
 

@@ -5,6 +5,7 @@ import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.CupState
+import com.footymanager.simulator.domain.model.GameDate
 import com.footymanager.simulator.domain.model.League
 import com.footymanager.simulator.domain.model.Match
 import com.footymanager.simulator.domain.model.MatchStatus
@@ -39,14 +40,15 @@ object CupEngine {
         career: Career,
         season: String,
         random: Random,
-        idProvider: () -> Long
+        idProvider: () -> Long,
+        seasonStart: GameDate = SeasonCalendar.SEASON_START
     ): Pair<CupState, List<Match>> {
         val entrants = selectEntrants(career.clubs, random, career.userClubId)
         if (entrants.size < CUP_CLUBS) {
             return CupState(season = season, active = false) to emptyList()
         }
         val state = CupState(season = season, round = 0, entrants = entrants, active = true)
-        val fixtures = buildRound(state, idProvider)
+        val fixtures = buildRound(state, idProvider, seasonStart)
         return state.copy(
             round = 1,
             fixtureIds = fixtures.map { it.id }
@@ -105,10 +107,14 @@ object CupEngine {
      * Builds the fixtures for the state's current round from its slot list.
      * Slots are paired adjacent: 0v1, 2v3, ... The first-listed side is at home.
      */
-    fun buildRound(state: CupState, idProvider: () -> Long): List<Match> {
+    fun buildRound(
+        state: CupState,
+        idProvider: () -> Long,
+        seasonStart: GameDate = SeasonCalendar.SEASON_START
+    ): List<Match> {
         val round = state.round.coerceAtLeast(1)
         val matchday = roundMatchday(round)
-        val date = SeasonCalendar.cupDate(round)
+        val date = SeasonCalendar.cupDate(round, seasonStart)
         val fixtures = mutableListOf<Match>()
         var i = 0
         while (i + 1 < state.entrants.size) {
@@ -156,7 +162,7 @@ object CupEngine {
             career.copy(cup = updated)
         } else {
             val nextState = updated.copy(round = state.round + 1)
-            val newFixtures = buildRound(nextState, idProvider)
+            val newFixtures = buildRound(nextState, idProvider, SeasonCalendar.seasonStart(career.seasonNumber))
             updated = nextState.copy(fixtureIds = updated.fixtureIds + newFixtures.map { it.id })
             career.copy(cup = updated, fixtures = career.fixtures + newFixtures)
         }

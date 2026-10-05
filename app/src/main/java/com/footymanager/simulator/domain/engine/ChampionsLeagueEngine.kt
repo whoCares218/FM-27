@@ -154,6 +154,9 @@ object ChampionsLeagueEngine {
         idProvider: () -> Long,
         competition: CompetitionType = CompetitionType.CHAMPIONS_LEAGUE
     ): Pair<List<Match>, List<TableRow>> {
+        // The calendar is anchored to this campaign's own start, not a global one,
+        // so a later season's European dates land in the correct year.
+        val seasonStart = startDate
         val matchdays = if (competition == CompetitionType.CONFERENCE_LEAGUE) 6 else 8
         val potMembers = (0 until 4).map { pot ->
             participants.filter { pots[it] == pot }
@@ -183,7 +186,7 @@ object ChampionsLeagueEngine {
             // Each continental matchday is played on its designated domestic round,
             // so a European fixture never lands in the same week as a league game.
             val domesticRound = rounds.getOrElse(md - 1) { md }
-            val date = SeasonCalendar.europeanLeaguePhaseDate(competition, md)
+            val date = SeasonCalendar.europeanLeaguePhaseDate(competition, md, seasonStart)
             for ((home, away) in games) {
                 matches += Match(
                     id = idProvider(),
@@ -445,6 +448,7 @@ object ChampionsLeagueEngine {
     ): Pair<List<KnockoutTie>, List<Match>> {
         val competition = state.competition
         val start = knockoutStart(competition)
+        val seasonStart = startDate
         val ordered = state.sortedTable().map { it.clubId }
         if (ordered.size < 24) return emptyList<KnockoutTie>() to emptyList()
 
@@ -458,8 +462,8 @@ object ChampionsLeagueEngine {
             val tieId = idProvider()
             val leg1Id = idProvider()
             val leg2Id = idProvider()
-            val leg1Date = SeasonCalendar.knockoutDate(start)
-            val leg2Date = SeasonCalendar.knockoutDate(start + 1)
+            val leg1Date = SeasonCalendar.knockoutDate(start, seasonStart)
+            val leg2Date = SeasonCalendar.knockoutDate(start + 1, seasonStart)
 
             matches += Match(
                 id = leg1Id, leagueId = League.forCompetition(competition).id, matchday = start,
@@ -495,6 +499,7 @@ object ChampionsLeagueEngine {
         competition: CompetitionType = CompetitionType.CHAMPIONS_LEAGUE
     ): Pair<List<KnockoutTie>, List<Match>> {
         val start = knockoutStart(competition)
+        val seasonStart = startDate
         val matchday = start + round.order * 2
         val ties = mutableListOf<KnockoutTie>()
         val matches = mutableListOf<Match>()
@@ -508,8 +513,8 @@ object ChampionsLeagueEngine {
             val tieId = idProvider()
             val leg1Id = idProvider()
             val leg2Id = if (round.legs == 2) idProvider() else null
-            val leg1Date = SeasonCalendar.knockoutDate(matchday)
-            val leg2Date = SeasonCalendar.knockoutDate(matchday + 1)
+            val leg1Date = SeasonCalendar.knockoutDate(matchday, seasonStart)
+            val leg2Date = SeasonCalendar.knockoutDate(matchday + 1, seasonStart)
 
             matches += Match(
                 id = leg1Id, leagueId = League.forCompetition(competition).id, matchday = matchday,
@@ -680,9 +685,10 @@ object ChampionsLeagueEngine {
         random: Random,
         idProvider: () -> Long
     ): Career {
+        val seasonStart = SeasonCalendar.seasonStart(career.seasonNumber)
         var result = career
         for (competition in europeanCompetitions) {
-            result = progressOne(result, competition, random, idProvider)
+            result = progressOne(result, competition, seasonStart, random, idProvider)
         }
         return result
     }
@@ -691,6 +697,7 @@ object ChampionsLeagueEngine {
     private fun progressOne(
         career: Career,
         competition: CompetitionType,
+        seasonStart: GameDate,
         random: Random,
         idProvider: () -> Long
     ): Career {
@@ -705,7 +712,7 @@ object ChampionsLeagueEngine {
             .all { it.isPlayed }
 
         if (leaguePhasePlayed && state.ties.isEmpty() && state.sortedTable().size >= 24) {
-            val (ties, matches) = buildPlayoffTies(state, GameDate(2027, 2, 16), random, idProvider)
+            val (ties, matches) = buildPlayoffTies(state, seasonStart, random, idProvider)
             fixtures = fixtures + matches
             state = state.copy(ties = ties)
         }
@@ -743,7 +750,7 @@ object ChampionsLeagueEngine {
             } else winners
 
             val (newTies, newMatches) = buildNextRound(
-                nextRound, entrants, GameDate(2027, 2, 16), idProvider, competition
+                nextRound, entrants, seasonStart, idProvider, competition
             )
             fixtures = fixtures + newMatches
             state = state.copy(ties = state.ties + newTies)

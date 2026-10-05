@@ -943,9 +943,7 @@ object SeasonEngine {
         // ---- New season ----
         val nextSeasonNumber = career.seasonNumber + 1
         val nextSeasonLabel = SeasonLabel.forNumber(nextSeasonNumber)
-        val newStartDate = SeasonCalendar.SEASON_START.plusDays(
-            (nextSeasonNumber - 1) * 364
-        )
+        val newStartDate = SeasonCalendar.seasonStart(nextSeasonNumber)
 
         // Retain last season's finishing positions for European qualification.
         val previousStandings = career.table.mapValues { (_, rows) ->
@@ -1054,10 +1052,13 @@ object SeasonEngine {
             career = seedCareer,
             season = nextSeasonLabel,
             random = random,
-            idProvider = { ++idCounter }
+            idProvider = { ++idCounter },
+            seasonStart = newStartDate
         )
         fixtures += cupFixtures
-        val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
+        // Anchor every fixture to the new campaign's own start, so the calendar
+        // and the simulate-to-date horizon stay correct for the new season.
+        val datedFixtures = SeasonCalendar.assignDates(fixtures, random, newStartDate)
 
         // Rebuild the board objectives for the new campaign.
         val newBoard = career.board.copy(

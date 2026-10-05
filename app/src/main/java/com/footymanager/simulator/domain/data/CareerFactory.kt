@@ -121,12 +121,13 @@ object CareerFactory {
             career = baseCareer,
             season = Career.CURRENT_SEASON,
             random = random,
-            idProvider = idProvider
+            idProvider = idProvider,
+            seasonStart = SeasonCalendar.SEASON_START
         )
         fixtures += cupFixtures
 
-        // Every fixture gets a real calendar date.
-        val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
+        // Every fixture gets a real calendar date, anchored to season 1's start.
+        val datedFixtures = SeasonCalendar.assignDates(fixtures, random, SeasonCalendar.SEASON_START)
 
         val userSquad = players.filter { it.clubId == userClub.id }
         val tactics = Tactics(formationId = userClub.formationId)
