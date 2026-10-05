@@ -106,10 +106,19 @@ object DevelopmentEngine {
     fun inflictInjury(player: Player, random: Random): Player {
         val type = InjuryType.matchInjuries[random.nextInt(InjuryType.matchInjuries.size)]
         val weeks = random.nextInt(type.minWeeks, type.maxWeeks + 1)
-        val stats = player.seasonStats.copy(injuriesSuffered = player.seasonStats.injuriesSuffered + 1)
+        val days = weeks * 7
+        val stats = player.seasonStats.copy(
+            injuriesSuffered = player.seasonStats.injuriesSuffered + 1,
+            injuryDays = player.seasonStats.injuryDays + days,
+            longestInjuryDays = maxOf(player.seasonStats.longestInjuryDays, days)
+        )
         return player.copy(
             injury = Injury(type, weeks),
-            seasonStats = stats
+            seasonStats = stats,
+            // Accumulated on injury, not sampled later, so the historical total is
+            // exact even though the injury itself heals and is cleared.
+            injuryDaysCareer = player.injuryDaysCareer + days,
+            longestInjuryDaysCareer = maxOf(player.longestInjuryDaysCareer, days)
         )
     }
 
@@ -300,6 +309,8 @@ object DevelopmentEngine {
         ratingSum = career.ratingSum + season.ratingSum,
         ratedMatches = career.ratedMatches + season.ratedMatches,
         injuriesSuffered = career.injuriesSuffered + season.injuriesSuffered,
+        injuryDays = career.injuryDays + season.injuryDays,
+        longestInjuryDays = maxOf(career.longestInjuryDays, season.longestInjuryDays),
         manOfTheMatch = career.manOfTheMatch + season.manOfTheMatch
     )
 

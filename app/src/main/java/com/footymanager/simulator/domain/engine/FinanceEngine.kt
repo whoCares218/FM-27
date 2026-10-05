@@ -112,6 +112,10 @@ object FinanceEngine {
             ledger = (career.ledger + entry).takeLast(600),
             news = news.takeLast(120),
             board = board,
+            players = career.players.map { player ->
+                if (player.clubId == null) player
+                else player.copy(wagesPaidCareer = player.wagesPaidCareer + player.wagePerWeek)
+            },
             idCounter = idCounter
         )
     }

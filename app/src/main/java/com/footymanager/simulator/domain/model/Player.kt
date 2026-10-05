@@ -138,6 +138,8 @@ data class PlayerSeasonStats(
     val ratingSum: Double = 0.0,
     val ratedMatches: Int = 0,
     val injuriesSuffered: Int = 0,
+    val injuryDays: Int = 0,
+    val longestInjuryDays: Int = 0,
     val manOfTheMatch: Int = 0
 ) {
     val averageRating: Double get() = if (ratedMatches == 0) 0.0 else ratingSum / ratedMatches
@@ -188,6 +190,20 @@ data class Player(
     val signedThisWindow: Boolean = false,
     val seasonStats: PlayerSeasonStats = PlayerSeasonStats.EMPTY,
     val careerStats: PlayerSeasonStats = PlayerSeasonStats.EMPTY,
+    /**
+     * Every wage payment this player has received, accumulated week by week as
+     * contracts change. Used by the club-history "most paid player" board, so it
+     * reflects real payments rather than a wage estimate.
+     */
+    val wagesPaidCareer: Long = 0L,
+    /**
+     * Total days this player has spent injured across the career. Added to when an
+     * injury is inflicted (never recomputed from the current injury), so the
+     * club-history injury board is a real historical total.
+     */
+    val injuryDaysCareer: Int = 0,
+    /** The longest single injury this player has suffered, in days. */
+    val longestInjuryDaysCareer: Int = 0,
     /** Number of consecutive seasons at the club; drives loyalty morale. */
     val seasonsAtClub: Int = 0,
     /**

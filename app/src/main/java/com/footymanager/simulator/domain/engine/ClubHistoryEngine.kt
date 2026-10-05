@@ -104,7 +104,6 @@ object ClubHistoryEngine {
         for (player in squad.values) {
             val stats = player.seasonStats
             val existing = players[player.id]
-            val wagePaid = player.wagePerWeek * WEEKS_PER_SEASON
             players[player.id] = PlayerCareerRecord(
                 playerId = player.id,
                 playerName = player.name,
@@ -125,12 +124,14 @@ object ClubHistoryEngine {
                 manOfTheMatch = (existing?.manOfTheMatch ?: 0) + stats.manOfTheMatch,
                 ratingSum = (existing?.ratingSum ?: 0.0) + stats.ratingSum,
                 ratedMatches = (existing?.ratedMatches ?: 0) + stats.ratedMatches,
-                totalWagesPaid = (existing?.totalWagesPaid ?: 0L) + wagePaid,
-                injuryDays = (existing?.injuryDays ?: 0) + player.injury.weeksRemaining * 7,
+                // The real, week-by-week wage total, not a wage estimate.
+                totalWagesPaid = player.wagesPaidCareer,
+                // Career injury totals are accumulated as injuries happen.
+                injuryDays = player.injuryDaysCareer,
                 injuries = (existing?.injuries ?: 0) + stats.injuriesSuffered,
                 longestInjuryDays = max(
                     existing?.longestInjuryDays ?: 0,
-                    player.injury.weeksRemaining * 7
+                    player.longestInjuryDaysCareer
                 ),
                 trophies = (existing?.trophies ?: emptyList()) + seasonTrophies,
                 retired = player.clubId == null && player.age >= 34,
@@ -164,9 +165,9 @@ object ClubHistoryEngine {
                 ratedMatches = player.seasonStats.ratedMatches,
                 manOfTheMatch = player.seasonStats.manOfTheMatch,
                 wagePaid = player.wagePerWeek * WEEKS_PER_SEASON,
-                injuryDays = player.injury.weeksRemaining * 7,
+                injuryDays = player.seasonStats.injuryDays,
                 injuries = player.seasonStats.injuriesSuffered,
-                longestInjuryDays = player.injury.weeksRemaining * 7,
+                longestInjuryDays = player.seasonStats.longestInjuryDays,
                 trophies = seasonTrophies
             )
         }
