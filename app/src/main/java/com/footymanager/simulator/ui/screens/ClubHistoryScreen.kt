@@ -162,6 +162,7 @@ fun ClubHistoryScreen(
             }
             HistoryTab.RECORDS -> {
                 item { SingleSeasonRecordsCard(career = career) }
+                item { NotableMatchesCard(career = career) }
                 item { LeaderboardCard("Top 10 most expensive players by total wages paid", history.topWages(), onOpenPlayer, kind = LeaderKind.WAGES) }
                 item { LeaderboardCard("Most injured players", history.mostInjured(), onOpenPlayer, kind = LeaderKind.INJURIES) }
             }
@@ -457,6 +458,64 @@ private fun SingleSeasonRecordsCard(career: Career) {
             if (holder != null) {
                 RecordLine(label = label, holder = holder)
                 Spacer(Modifier.height(6.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotableMatchesCard(career: Career) {
+    val records = career.clubHistory.notableMatches
+    FmCard {
+        SectionHeader("Notable matches")
+        Spacer(Modifier.height(8.dp))
+        if (records.isEmpty()) {
+            Text(
+                text = "Your biggest results will be remembered here as the seasons pass.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            return@FmCard
+        }
+        records.sortedBy { it.label }.forEach { record ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = record.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${if (record.home) "vs" else "at"} ${record.opponentName}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${record.competition} • ${record.date} • ${record.season}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = "${record.goalsFor}–${record.goalsAgainst}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = when {
+                        record.margin > 0 -> StatColors.good
+                        record.margin < 0 -> StatColors.bad
+                        else -> StatColors.average
+                    },
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }

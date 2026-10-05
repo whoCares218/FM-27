@@ -110,6 +110,27 @@ data class TrophyRecord(
     val label: String
 )
 
+/**
+ * A single notable match in the club's history, e.g. the biggest win or the
+ * highest-scoring game. The goals are stored from the club's own perspective, so
+ * "biggest win" and "biggest defeat" share one shape.
+ */
+@Serializable
+data class MatchRecordEntry(
+    val label: String,
+    val season: String,
+    val opponentName: String,
+    val home: Boolean,
+    val goalsFor: Int,
+    val goalsAgainst: Int,
+    val competition: String = "",
+    val date: String = ""
+) {
+    /** Positive for a win, negative for a defeat, from the club's perspective. */
+    val margin: Int get() = goalsFor - goalsAgainst
+    val totalGoals: Int get() = goalsFor + goalsAgainst
+}
+
 /** One line of the club's season-by-season history. */
 @Serializable
 data class ClubSeasonRecord(
@@ -165,7 +186,9 @@ data class ClubHistory(
     val recordHighestPoints: SeasonRecordHolder? = null,
     val recordLowestPoints: SeasonRecordHolder? = null,
     val recordMostGoals: SeasonRecordHolder? = null,
-    val recordFewestConceded: SeasonRecordHolder? = null
+    val recordFewestConceded: SeasonRecordHolder? = null,
+    /** Biggest wins, heaviest defeats and the highest-scoring matches ever played. */
+    val notableMatches: List<MatchRecordEntry> = emptyList()
 ) {
     /** Aggregated players ordered by total goals, for the all-time board. */
     fun topScorers(limit: Int = 10): List<PlayerCareerRecord> =
@@ -217,6 +240,10 @@ data class ClubHistory(
         ).take(limit)
 
     val totalTrophies: Int get() = trophies.size
+
+    /** The notable match carrying a given label, if it has been set. */
+    fun notableMatch(label: String): MatchRecordEntry? =
+        notableMatches.firstOrNull { it.label == label }
 
     fun trophyCount(competition: String): Int =
         trophies.count { it.competition == competition }

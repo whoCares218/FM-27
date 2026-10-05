@@ -199,6 +199,37 @@ class ClubHistoryTest {
     }
 
     @Test
+    fun `notable match records accumulate and survive serialization`() {
+        var career = newCareer(seed = 9999L)
+        val random = Random(37)
+        career = rollSeason(career, random)
+        val afterOne = career.clubHistory.notableMatches
+        assertTrue("A played season must record notable matches", afterOne.isNotEmpty())
+        assertTrue(
+            "The biggest win must be a win",
+            (career.clubHistory.notableMatch("Biggest win")?.margin ?: 0) > 0
+        )
+        assertTrue(
+            "The highest-scoring match must be recorded",
+            career.clubHistory.notableMatch("Highest-scoring match") != null
+        )
+
+        career = rollSeason(career, random)
+        // Idempotent merging: each label appears at most once.
+        val labels = career.clubHistory.notableMatches.map { it.label }
+        assertEquals("Each notable-match label must be unique", labels.size, labels.distinct().size)
+        assertTrue("Records must persist into a second season", career.clubHistory.notableMatches.isNotEmpty())
+
+        val json = com.footymanager.simulator.domain.data.SaveCodec.encode(career)
+        val reloaded = com.footymanager.simulator.domain.data.SaveCodec.decode(json)!!
+        assertEquals(
+            "Notable matches must survive serialization",
+            career.clubHistory.notableMatches,
+            reloaded.clubHistory.notableMatches
+        )
+    }
+
+    @Test
     fun `every competition table in the world stays internally consistent after simulation`() {
         val career = newCareer(seed = 8888L)
         val updated = SimulateToDateEngine.simulateThrough(

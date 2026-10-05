@@ -6,6 +6,8 @@ import com.footymanager.simulator.domain.model.ClubSeasonRecord
 import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.FinanceModel
 import com.footymanager.simulator.domain.model.League
+import com.footymanager.simulator.domain.model.Match
+import com.footymanager.simulator.domain.model.MatchRecordEntry
 import com.footymanager.simulator.domain.model.PlayerCareerRecord
 import com.footymanager.simulator.domain.model.PlayerSeasonRecord
 import com.footymanager.simulator.domain.model.SeasonRecordHolder
@@ -81,7 +83,13 @@ object ClubHistoryEngine {
 
         val history = career.clubHistory.copy(
             seasons = (career.clubHistory.seasons.filter { it.seasonNumber != career.seasonNumber } + record)
-                .sortedBy { it.seasonNumber }
+                .sortedBy { it.seasonNumber },
+            // Fold this season's notable results into the all-time record board
+            // before the fixture list is regenerated and they are lost.
+            notableMatches = mergeNotableMatches(
+                career.clubHistory.notableMatches,
+                seasonNotableMatches(career)
+            )
         )
         return career.copy(clubHistory = history)
     }
@@ -301,9 +309,79 @@ object ClubHistoryEngine {
             recordHighestPoints = mostPoints,
             recordLowestPoints = fewestPoints,
             recordMostGoals = mostGoals,
-            recordFewestConceded = fewestConceded
+            recordFewestConceded = fewestConceded,
+            notableMatches = mergeNotableMatches(history.notableMatches, seasonNotableMatches(career))
         )
     }
+
+    /**
+     * The club's most memorable results *this season*: the biggest win, the
+     * heaviest defeat, the highest-scoring match and the most goals scored in one
+     * game. Built from the played fixtures, so it always reflects real results.
+     */
+    fun seasonNotableMatches(career: Career): List<MatchRecordEntry> {
+        val clubId = career.userClubId
+        val played = career.fixtures.filter { it.isPlayed && it.involves(clubId) }
+        if (played.isEmpty()) return emptyList()
+
+        fun entry(match: Match, label: String): MatchRecordEntry {
+            val home = match.isHomeFor(clubId)
+            val opponentId = match.opponentOf(clubId)
+            return MatchRecordEntry(
+                label = label,
+                season = career.season,
+                opponentName = career.club(opponentId)?.name ?: "-",
+                home = home,
+                goalsFor = match.goalsFor(clubId),
+                goalsAgainst = match.goalsAgainst(clubId),
+                competition = match.competitionLabel,
+                date = match.date?.numeric() ?: ""
+            )
+        }
+
+        val out = mutableListOf<MatchRecordEntry>()
+        played.filter { it.goalsFor(clubId) > it.goalsAgainst(clubId) }
+            .maxByOrNull { it.goalsFor(clubId) - it.goalsAgainst(clubId) }
+            ?.let { out += entry(it, "Biggest win") }
+        played.filter { it.goalsFor(clubId) < it.goalsAgainst(clubId) }
+            .minByOrNull { it.goalsFor(clubId) - it.goalsAgainst(clubId) }
+            ?.let { out += entry(it, "Biggest defeat") }
+        played.maxByOrNull { it.goalsFor(clubId) + it.goalsAgainst(clubId) }
+            ?.let { out += entry(it, "Highest-scoring match") }
+        played.filter { it.goalsFor(clubId) > it.goalsAgainst(clubId) }
+            .maxByOrNull { it.goalsFor(clubId) }
+            ?.let { out += entry(it, "Most goals scored") }
+        return out
+    }
+
+    /**
+     * Keeps the better of an existing all-time record and this season's candidate,
+     * per label. Idempotent, so it is safe to run at both season record time and
+     * player-finalise time.
+     */
+    private fun mergeNotableMatches(
+        existing: List<MatchRecordEntry>,
+        season: List<MatchRecordEntry>
+    ): List<MatchRecordEntry> {
+        if (season.isEmpty()) return existing
+        val byLabel = existing.associateBy { it.label }.toMutableMap()
+        for (candidate in season) {
+            val current = byLabel[candidate.label]
+            if (current == null || isBetter(candidate, current)) {
+                byLabel[candidate.label] = candidate
+            }
+        }
+        return byLabel.values.toList()
+    }
+
+    private fun isBetter(candidate: MatchRecordEntry, current: MatchRecordEntry): Boolean =
+        when (candidate.label) {
+            "Biggest win" -> candidate.margin > current.margin
+            "Biggest defeat" -> candidate.margin < current.margin
+            "Highest-scoring match" -> candidate.totalGoals > current.totalGoals
+            "Most goals scored" -> candidate.goalsFor > current.goalsFor
+            else -> false
+        }
 
     private fun PlayerSeasonRecord.playerIdFor(history: ClubHistory): Long =
         history.players.values.firstOrNull { it.playerName == playerName }?.playerId ?: playerId
