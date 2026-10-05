@@ -198,19 +198,19 @@ fun HomeScreen(
                 )
             } else {
                 FmPrimaryButton(
-                    text = "Play Match",
+                    text = "PLAY MATCH",
                     onClick = onPlayMatch,
                     icon = Icons.Filled.PlayArrow
                 )
                 Spacer(Modifier.height(8.dp))
                 FmSecondaryButton(
-                    text = "Quick Sim Match",
+                    text = "QUICK SIM MATCH",
                     onClick = onQuickSim,
                     icon = Icons.Outlined.FastForward
                 )
                 Spacer(Modifier.height(8.dp))
                 FmSecondaryButton(
-                    text = "Simulate to Date",
+                    text = "SIMULATE TO DATE",
                     onClick = onSimulateToDate,
                     icon = Icons.Outlined.CalendarMonth
                 )
