@@ -527,6 +527,7 @@ private fun AppNavHost(
                 CompetitionHubScreen(
                     career = career,
                     onOpenLeague = { navController.navigate(Routes.LEAGUE_TABLE) },
+                    onOpenLeagueById = { id -> navController.navigate(Routes.leagueTable(id)) },
                     onOpenChampionsLeague = { navController.navigate(Routes.CHAMPIONS_LEAGUE) },
                     onOpenEurope = { navController.navigate(Routes.EUROPE) },
                     onOpenCompetition = { competition ->
@@ -543,6 +544,21 @@ private fun AppNavHost(
                     career = career,
                     onOpenFixtures = { navController.navigate(Routes.FIXTURES) },
                     onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
+                )
+            }
+        }
+
+        composable(
+            route = Routes.LEAGUE_TABLE_COMPETITION,
+            arguments = listOf(navArgument("leagueId") { type = NavType.StringType })
+        ) { entry ->
+            val leagueId = entry.arguments?.getString("leagueId")
+            if (career != null) {
+                LeagueScreen(
+                    career = career,
+                    onOpenFixtures = { navController.navigate(Routes.FIXTURES) },
+                    onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) },
+                    initialLeagueId = leagueId
                 )
             }
         }

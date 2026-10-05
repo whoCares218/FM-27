@@ -59,6 +59,7 @@ import com.footymanager.simulator.ui.theme.StatColors
 fun CompetitionHubScreen(
     career: Career,
     onOpenLeague: () -> Unit,
+    onOpenLeagueById: (String) -> Unit = { onOpenLeague() },
     onOpenChampionsLeague: () -> Unit,
     onOpenEurope: () -> Unit = onOpenChampionsLeague,
     onOpenCompetition: (CompetitionType) -> Unit = { onOpenEurope() },
@@ -96,7 +97,12 @@ fun CompetitionHubScreen(
                 item { CupsTab(career = career, onOpenFixtures = onOpenFixtures) }
             }
             HubTab.OTHERS -> {
-                item { OthersTab(career = career, onOpenLeague = onOpenLeague) }
+                item {
+                    OthersTab(
+                        career = career,
+                        onOpenLeague = { id -> onOpenLeagueById(id) }
+                    )
+                }
             }
         }
     }
@@ -174,59 +180,84 @@ private fun DomesticTab(career: Career, onOpenLeague: () -> Unit, onOpenFixtures
 
 @Composable
 private fun EuropeTab(career: Career, onOpenCompetition: (CompetitionType) -> Unit) {
-    val ucl = career.championsLeague
-    val primary = europeanCompetitions.firstOrNull {
+    val userIn = europeanCompetitions.firstOrNull {
         career.europeanState(it).participantIds.contains(career.userClubId)
-    } ?: CompetitionType.CHAMPIONS_LEAGUE
+    }
+    var selected by remember(userIn) {
+        mutableStateOf(userIn ?: CompetitionType.CHAMPIONS_LEAGUE)
+    }
+    val state = career.europeanState(selected)
+    val table = state.sortedTable()
+    val userPosition = if (state.participantIds.contains(career.userClubId)) {
+        state.positionOf(career.userClubId)
+    } else 0
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        FmCard(onClick = { onOpenCompetition(primary) }) {
-            SectionHeader("Continental football") {
-                Text(
-                    text = if (ucl.active) "In progress" else "Pre-season",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (ucl.active) StatColors.elite else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "Open the Champions League, Europa League and Conference League " +
-                    "league phases, knockout brackets and European statistics.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "Tap to open",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
+        FmCard(padding = 12.dp) {
+            FmDropdown(
+                label = "Competition",
+                options = europeanCompetitions,
+                selected = selected,
+                onSelect = { selected = it },
+                optionLabel = { it.label }
             )
         }
 
-        europeanCompetitions.forEach { competition ->
-            val state = career.europeanState(competition)
-            FmCard(onClick = { onOpenCompetition(competition) }) {
-                SectionHeader(competition.label) {
-                    Text(
-                        text = if (state.active) "MD ${state.currentMatchday.coerceAtMost(state.leaguePhaseMatchdays)}/${state.leaguePhaseMatchdays}"
-                        else "Not entered",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (state.active) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                val userIn = state.participantIds.contains(career.userClubId)
+        FmCard(padding = 10.dp, onClick = { onOpenCompetition(selected) }) {
+            SectionHeader(selected.label) {
                 Text(
-                    text = if (userIn) {
-                        val pos = state.positionOf(career.userClubId)
-                        "Your club: position ${if (pos == 0) "-" else "$pos"} of 36"
-                    } else {
-                        "36-team league phase with knockouts."
+                    text = when {
+                        !state.active -> "Pre-season"
+                        state.winnerClubId != null -> "Complete"
+                        else -> "MD ${state.currentMatchday.coerceAtMost(state.leaguePhaseMatchdays)}/${state.leaguePhaseMatchdays}"
                     },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (state.active) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = if (userPosition > 0) {
+                    "Your club: position $userPosition of ${state.participantIds.size}"
+                } else {
+                    "${state.participantIds.size}-team league phase with knockouts. Tap to open the bracket."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (table.isNotEmpty()) {
+            FmCard(padding = 10.dp) {
+                SectionHeader("${selected.label} table") {
+                    Text(
+                        text = "${table.size} clubs",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                TableHeaderRow()
+                Spacer(Modifier.height(4.dp))
+                table.forEachIndexed { index, row ->
+                    TableRowItem(
+                        position = index + 1,
+                        row = row,
+                        career = career,
+                        league = League.forCompetition(selected),
+                        clubCount = table.size,
+                        isUserClub = row.clubId == career.userClubId,
+                        onClick = null
+                    )
+                }
+            }
+        } else {
+            EmptyState(
+                icon = Icons.Outlined.EmojiEvents,
+                title = "No table yet",
+                body = "The league phase table appears once the competition begins."
+            )
         }
     }
 }
@@ -379,7 +410,7 @@ private fun CupsTab(career: Career, onOpenFixtures: () -> Unit) {
 }
 
 @Composable
-private fun OthersTab(career: Career, onOpenLeague: () -> Unit) {
+private fun OthersTab(career: Career, onOpenLeague: (String) -> Unit) {
     val leagues = remember(career.clubs) {
         League.all.filter { league -> career.clubs.any { it.leagueId == league.id } }
             .filter { it.id != career.userLeagueId }
@@ -389,7 +420,8 @@ private fun OthersTab(career: Career, onOpenLeague: () -> Unit) {
             SectionHeader("Other leagues")
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Browse every other division in the game. Tap a club in the table to view its profile.",
+                text = "Compact tables for competitions you are not in. Tap view full table " +
+                    "to open the complete standings.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -397,26 +429,68 @@ private fun OthersTab(career: Career, onOpenLeague: () -> Unit) {
         leagues.forEach { league ->
             val table = career.sortedTable(league.id)
             if (table.isNotEmpty()) {
-                FmCard(padding = 10.dp, onClick = onOpenLeague) {
-                    SectionHeader(league.name) {
-                        Text(
-                            text = "${career.clubs.count { it.leagueId == league.id }} clubs",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    table.take(3).forEachIndexed { index, row ->
-                        HubTableLine(
-                            position = index + 1,
-                            career = career,
-                            row = row,
-                            isUser = false
-                        )
-                    }
-                }
+                MiniTableCard(
+                    career = career,
+                    title = league.name,
+                    rows = table,
+                    onViewFull = { onOpenLeague(league.id) }
+                )
             }
         }
+        // Continental competitions the user is not in are worth a look too.
+        europeanCompetitions.forEach { competition ->
+            val state = career.europeanState(competition)
+            val userIn = state.participantIds.contains(career.userClubId)
+            val rows = state.sortedTable()
+            if (state.active && !userIn && rows.isNotEmpty()) {
+                MiniTableCard(
+                    career = career,
+                    title = competition.label,
+                    rows = rows,
+                    onViewFull = { onOpenLeague(League.forCompetition(competition).id) }
+                )
+            }
+        }
+    }
+}
+
+/** A compact top-5 table with a shortcut to the full standings. */
+@Composable
+private fun MiniTableCard(
+    career: Career,
+    title: String,
+    rows: List<TableRow>,
+    onViewFull: () -> Unit
+) {
+    FmCard(padding = 10.dp) {
+        SectionHeader(title) {
+            Text(
+                text = "Top 5",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        rows.take(5).forEachIndexed { index, row ->
+            HubTableLine(
+                position = index + 1,
+                career = career,
+                row = row,
+                isUser = row.clubId == career.userClubId
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "VIEW FULL TABLE",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onViewFull)
+                .padding(vertical = 4.dp),
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -481,19 +555,27 @@ private fun HubTableLine(position: Int, career: Career, row: TableRow, isUser: B
 fun LeagueScreen(
     career: Career,
     onOpenFixtures: () -> Unit,
-    onOpenClub: (Long) -> Unit = {}
+    onOpenClub: (Long) -> Unit = {},
+    initialLeagueId: String? = null
 ) {
     val availableLeagues = remember(career.clubs) {
-        League.all.filter { league -> career.clubs.any { it.leagueId == league.id } }
+        (League.all + League.european.values)
+            .filter { league ->
+                League.european.values.contains(league) ||
+                    career.clubs.any { it.leagueId == league.id }
+            }
     }
     val countries = remember(availableLeagues) {
         availableLeagues.map { it.country }.distinct().sorted()
     }
-    var selectedCountry by remember(career.userLeagueId) {
-        mutableStateOf(League.byId(career.userLeagueId).country)
+    val initialLeague = remember(initialLeagueId, career.userLeagueId) {
+        initialLeagueId?.let { League.byId(it) } ?: League.byId(career.userLeagueId)
     }
-    var selectedLeagueId by remember(career.userLeagueId) {
-        mutableStateOf(career.userLeagueId)
+    var selectedCountry by remember(initialLeague) {
+        mutableStateOf(initialLeague.country)
+    }
+    var selectedLeagueId by remember(initialLeague) {
+        mutableStateOf(initialLeague.id)
     }
 
     // The league list follows the chosen country; picking a country resets the
@@ -501,8 +583,14 @@ fun LeagueScreen(
     val countryLeagues = availableLeagues.filter { it.country == selectedCountry }
     val league = countryLeagues.firstOrNull { it.id == selectedLeagueId }
         ?: League.byId(selectedLeagueId)
-    val table = remember(career.table, league.id) { career.sortedTable(league.id) }
-    val clubCount = remember(career.clubs, league.id) { career.clubs.count { it.leagueId == league.id } }
+    val europeanCompetition = europeanCompetitions.firstOrNull { League.forCompetition(it).id == league.id }
+    val table = remember(career.table, career.championsLeague, career.europaLeague, career.conferenceLeague, league.id) {
+        europeanCompetition?.let { career.europeanState(it).sortedTable() } ?: career.sortedTable(league.id)
+    }
+    val clubCount = remember(career.clubs, career.championsLeague, league.id) {
+        europeanCompetition?.let { career.europeanState(it).participantIds.size }
+            ?: career.clubs.count { it.leagueId == league.id }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

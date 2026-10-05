@@ -774,8 +774,9 @@ class ScreenRenderTest {
         composeRule.onNodeWithText("Domestic").assertExists()
         scrollToAndClick("Europe")
         composeRule.onAllNodes(hasScrollAction())[0]
-            .performScrollToNode(hasText("CONTINENTAL FOOTBALL", substring = true))
-        composeRule.onNodeWithText("CONTINENTAL FOOTBALL", substring = true).assertExists()
+            .performScrollToNode(hasText("Competition", substring = true))
+        composeRule.onNodeWithText("Competition", substring = true).assertExists()
+        composeRule.onNodeWithText("Champions League", substring = true).assertExists()
     }
 
     @Test

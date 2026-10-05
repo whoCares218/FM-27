@@ -29,6 +29,8 @@ object Routes {
     const val TRANSFERS = "transfers"
     const val LEAGUE = "league"
     const val LEAGUE_TABLE = "league_table"
+    const val LEAGUE_TABLE_COMPETITION = "league_table/{leagueId}"
+    fun leagueTable(leagueId: String) = "league_table/$leagueId"
     const val MORE = "more"
 
     const val PLAYER_DETAIL = "player/{playerId}"
