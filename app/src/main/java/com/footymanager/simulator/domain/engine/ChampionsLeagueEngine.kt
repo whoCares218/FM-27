@@ -5,6 +5,7 @@ import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.ChampionsLeagueState
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.CompetitionType
+import com.footymanager.simulator.domain.model.europeanCompetitions
 import com.footymanager.simulator.domain.model.GameDate
 import com.footymanager.simulator.domain.model.KnockoutRound
 import com.footymanager.simulator.domain.model.KnockoutTie
@@ -41,6 +42,10 @@ object ChampionsLeagueEngine {
      * they slot into the same weekly calendar. Each round occupies two matchdays.
      */
     const val KNOCKOUT_FIRST_MATCHDAY = 18
+
+    /** The domestic round on which a competition's knockout stage begins. */
+    private fun knockoutStart(competition: CompetitionType): Int =
+        SeasonCalendar.knockoutFirstMatchday(competition)
 
     /**
      * Chooses the 36 participants and seeds them into pots.
@@ -79,6 +84,45 @@ object ChampionsLeagueEngine {
         return qualified.distinct().take(ChampionsLeagueState.PARTICIPANTS)
     }
 
+    /**
+     * Chooses the 36 participants for a secondary continental competition.
+     *
+     * The Europa League takes the next tier of clubs after the Champions League
+     * places; the Conference League takes the tier after that. The three sets are
+     * disjoint, so a club plays in exactly one European competition, which is how
+     * the real pyramid works.
+     */
+    fun buildSecondaryParticipants(
+        career: com.footymanager.simulator.domain.model.Career,
+        competition: CompetitionType
+    ): List<Long> {
+        val ucl = buildParticipants(career)
+        val pool = career.clubs
+            .filter { it.id !in ucl }
+            .filter { it.leagueId != League.CHAMPIONSHIP.id }
+            .sortedByDescending { it.reputation }
+
+        // The Europa League is stronger than the Conference League, so it takes
+        // the better half of the remaining pool and the Conference takes the rest.
+        val eligible = pool.take(ChampionsLeagueState.PARTICIPANTS * 2)
+        val ordered = if (competition == CompetitionType.EUROPA_LEAGUE) {
+            eligible.take(ChampionsLeagueState.PARTICIPANTS)
+        } else {
+            eligible.drop(ChampionsLeagueState.PARTICIPANTS).take(ChampionsLeagueState.PARTICIPANTS)
+        }
+        return ordered.map { it.id }.distinct()
+    }
+
+    /** Picks the participant set appropriate to a competition. */
+    fun participantsFor(
+        career: com.footymanager.simulator.domain.model.Career,
+        competition: CompetitionType
+    ): List<Long> = if (competition == CompetitionType.CHAMPIONS_LEAGUE) {
+        buildParticipants(career)
+    } else {
+        buildSecondaryParticipants(career, competition)
+    }
+
     /** Assigns each participant to a pot (0..3) by reputation, nine per pot. */
     fun buildPots(clubs: List<Club>, participants: List<Long>): Map<Long, Int> {
         val ordered = participants
@@ -100,45 +144,48 @@ object ChampionsLeagueEngine {
         pots: Map<Long, Int>,
         startDate: GameDate,
         random: Random,
-        idProvider: () -> Long
+        idProvider: () -> Long,
+        competition: CompetitionType = CompetitionType.CHAMPIONS_LEAGUE
     ): Pair<List<Match>, List<TableRow>> {
+        val matchdays = if (competition == CompetitionType.CONFERENCE_LEAGUE) 6 else 8
         val potMembers = (0 until 4).map { pot ->
             participants.filter { pots[it] == pot }
         }
 
-        // Draw the fixtures and the calendar together. Colouring the eight-round
-        // schedule can occasionally paint itself into a corner, so a fresh draw is
-        // taken until one produces a complete calendar.
-        var pairs = attemptSchedule(participants, potMembers, random)
-        var byMatchday = assignToMatchdays(pairs, random)
+        // Draw the fixtures and the calendar together. Colouring the schedule can
+        // occasionally paint itself into a corner, so a fresh draw is taken until
+        // one produces a complete calendar.
+        var pairs = attemptSchedule(participants, potMembers, random, matchdays)
+        var byMatchday = assignToMatchdays(pairs, random, matchdays)
         var guard = 0
         while (byMatchday == null && guard < 30) {
-            pairs = attemptSchedule(participants, potMembers, random)
-            byMatchday = assignToMatchdays(pairs, random)
+            pairs = attemptSchedule(participants, potMembers, random, matchdays)
+            byMatchday = assignToMatchdays(pairs, random, matchdays)
             guard++
         }
         // Guaranteed fallback: even distribution rather than no schedule at all.
-        val schedule = byMatchday ?: spreadAcrossMatchdays(pairs)
+        val schedule = byMatchday ?: spreadAcrossMatchdays(pairs, matchdays)
 
         val matches = mutableListOf<Match>()
         val table = mutableListOf<TableRow>()
         for (id in participants) table += TableRow(clubId = id)
 
-        for (md in 1..LEAGUE_PHASE_MATCHDAYS) {
+        val rounds = SeasonCalendar.europeanRoundSchedule(competition)
+        for (md in 1..matchdays) {
             val games = schedule[md - 1]
-            // Each UCL matchday is played on its designated domestic round, so a
-            // European fixture never lands in the same week as a league game.
-            val domesticRound = SeasonCalendar.uclRoundSchedule.getOrElse(md - 1) { md }
-            val date = SeasonCalendar.uclLeaguePhaseDate(md)
+            // Each continental matchday is played on its designated domestic round,
+            // so a European fixture never lands in the same week as a league game.
+            val domesticRound = rounds.getOrElse(md - 1) { md }
+            val date = SeasonCalendar.europeanLeaguePhaseDate(competition, md)
             for ((home, away) in games) {
                 matches += Match(
                     id = idProvider(),
-                    leagueId = League.CHAMPIONS_LEAGUE.id,
+                    leagueId = League.forCompetition(competition).id,
                     matchday = domesticRound,
                     homeClubId = home,
                     awayClubId = away,
                     status = MatchStatus.SCHEDULED,
-                    competition = CompetitionType.CHAMPIONS_LEAGUE,
+                    competition = competition,
                     date = date,
                     competitionRound = md
                 )
@@ -148,29 +195,34 @@ object ChampionsLeagueEngine {
     }
 
     /**
-     * Pairs each club with two opponents from each pot, honouring home/away.
+     * Pairs each club with opponents from across the pots, honouring home/away.
      *
-     * The 36 clubs are split into four pots of nine. Every club plays two sides
-     * from its own pot and two from each of the other three pots, giving eight
-     * distinct opponents. Within a pot the clubs are linked in a ring; between two
-     * pots they are linked in a pair of shifted rings. Both structures give every
-     * club exactly two distinct opponents, and because the order is shuffled each
-     * season the draw looks different every time.
+     * The 36 clubs are split into four pots of nine. In the eight-matchday format
+     * (Champions League, Europa League) every club plays two sides from its own pot
+     * and two from each of the other three pots. In the six-matchday Conference
+     * League format it plays two from each of the three other pots and none from
+     * its own. Both structures give every club a fixed number of distinct
+     * opponents, and because the order is shuffled each season the draw looks
+     * different every time.
      */
     private fun attemptSchedule(
         participants: List<Long>,
         potMembers: List<List<Long>>,
-        random: Random
+        random: Random,
+        matchdays: Int
     ): List<Pair<Long, Long>> {
         val opponents: MutableMap<Long, MutableList<Long>> =
             participants.associateWithTo(mutableMapOf()) { mutableListOf() }
 
-        // Two opponents from the club's own pot.
-        for (pot in 0 until 4) {
-            val order = potMembers[pot].shuffled(random)
-            if (order.size < 3) continue
-            for (i in order.indices) {
-                link(order[i], order[(i + 1) % order.size], opponents)
+        // Two opponents from the club's own pot, but only in the eight-matchday
+        // format. The six-matchday format draws every opponent from other pots.
+        if (matchdays >= 8) {
+            for (pot in 0 until 4) {
+                val order = potMembers[pot].shuffled(random)
+                if (order.size < 3) continue
+                for (i in order.indices) {
+                    link(order[i], order[(i + 1) % order.size], opponents)
+                }
             }
         }
 
@@ -187,9 +239,9 @@ object ChampionsLeagueEngine {
             }
         }
 
-        val complete = participants.all { opponents.getValue(it).size == 8 }
-        if (!complete) return deterministicSchedule(participants, potMembers)
-        return collectPairs(participants, opponents)
+        val complete = participants.all { opponents.getValue(it).size == matchdays }
+        if (!complete) return deterministicSchedule(participants, potMembers, matchdays)
+        return collectPairs(participants, opponents, matchdays / 2)
     }
 
     private fun link(a: Long, b: Long, opponents: MutableMap<Long, MutableList<Long>>) {
@@ -200,18 +252,21 @@ object ChampionsLeagueEngine {
 
     /**
      * Deterministic fallback used only if random pairing somehow fails. It links
-     * pots by index, which always yields a valid eight-opponent schedule.
+     * pots by index, which always yields a valid schedule.
      */
     private fun deterministicSchedule(
         participants: List<Long>,
-        potMembers: List<List<Long>>
+        potMembers: List<List<Long>>,
+        matchdays: Int
     ): List<Pair<Long, Long>> {
         val opponents: MutableMap<Long, MutableList<Long>> =
             participants.associateWithTo(mutableMapOf()) { mutableListOf() }
-        for (pot in 0 until 4) {
-            val order = potMembers[pot]
-            if (order.size < 3) continue
-            for (i in order.indices) link(order[i], order[(i + 1) % order.size], opponents)
+        if (matchdays >= 8) {
+            for (pot in 0 until 4) {
+                val order = potMembers[pot]
+                if (order.size < 3) continue
+                for (i in order.indices) link(order[i], order[(i + 1) % order.size], opponents)
+            }
         }
         for (a in 0 until 4) {
             for (b in a + 1 until 4) {
@@ -224,12 +279,13 @@ object ChampionsLeagueEngine {
                 }
             }
         }
-        return collectPairs(participants, opponents)
+        return collectPairs(participants, opponents, matchdays / 2)
     }
 
     private fun collectPairs(
         participants: List<Long>,
-        opponents: Map<Long, List<Long>>
+        opponents: Map<Long, List<Long>>,
+        homeTarget: Int
     ): List<Pair<Long, Long>> {
         val pairs = mutableListOf<Pair<Long, Long>>()
         val seen = mutableSetOf<Pair<Long, Long>>()
@@ -239,21 +295,23 @@ object ChampionsLeagueEngine {
                 if (seen.add(key)) pairs += club to opponent
             }
         }
-        return balanceHomeAway(pairs, participants)
+        return balanceHomeAway(pairs, participants, homeTarget)
     }
 
     /**
-     * Flips venues so every club ends with a four/four home-away split, which the
-     * real format requires and which keeps the table fair.
+     * Flips venues so every club ends with a balanced home-away split (four/four
+     * in the eight-matchday format, three/three in the six-matchday format), which
+     * the real format requires and which keeps the table fair.
      */
     private fun balanceHomeAway(
         pairs: List<Pair<Long, Long>>,
-        participants: List<Long>
+        participants: List<Long>,
+        homeTarget: Int
     ): List<Pair<Long, Long>> {
         val homeCount = participants.associateWith { 0 }.toMutableMap()
         val result = mutableListOf<Pair<Long, Long>>()
         for ((home, away) in pairs) {
-            if (homeCount.getValue(home) >= 4 && homeCount.getValue(away) < 4) {
+            if (homeCount.getValue(home) >= homeTarget && homeCount.getValue(away) < homeTarget) {
                 result += away to home
                 homeCount[away] = homeCount.getValue(away) + 1
             } else {
@@ -280,7 +338,8 @@ object ChampionsLeagueEngine {
      */
     private fun assignToMatchdays(
         pairs: List<Pair<Long, Long>>,
-        random: Random
+        random: Random,
+        matchdays: Int
     ): List<List<Pair<Long, Long>>>? {
         val edges = pairs.shuffled(random)
         val incidence = mutableMapOf<Long, MutableList<Int>>()
@@ -320,7 +379,7 @@ object ChampionsLeagueEngine {
                 val (home, away) = edges[index]
                 val usedHome = clubColours.getValue(home)
                 val usedAway = clubColours.getValue(away)
-                val options = (0 until LEAGUE_PHASE_MATCHDAYS)
+                val options = (0 until matchdays)
                     .filter { it !in usedHome && it !in usedAway }
                 if (bestOptions == null || options.size < bestOptions!!.size) {
                     bestSlot = k
@@ -349,7 +408,7 @@ object ChampionsLeagueEngine {
         }
 
         if (!backtrack(0)) return null
-        val buckets = (0 until LEAGUE_PHASE_MATCHDAYS).map { mutableListOf<Pair<Long, Long>>() }
+        val buckets = (0 until matchdays).map { mutableListOf<Pair<Long, Long>>() }
         for ((index, edge) in edges.withIndex()) buckets[colour[index]] += edge
         return buckets
     }
@@ -360,10 +419,11 @@ object ChampionsLeagueEngine {
      * a club would occasionally play twice in a week.
      */
     private fun spreadAcrossMatchdays(
-        pairs: List<Pair<Long, Long>>
+        pairs: List<Pair<Long, Long>>,
+        matchdays: Int
     ): List<List<Pair<Long, Long>>> {
-        val buckets = (0 until LEAGUE_PHASE_MATCHDAYS).map { mutableListOf<Pair<Long, Long>>() }
-        pairs.forEachIndexed { index, pair -> buckets[index % LEAGUE_PHASE_MATCHDAYS] += pair }
+        val buckets = (0 until matchdays).map { mutableListOf<Pair<Long, Long>>() }
+        pairs.forEachIndexed { index, pair -> buckets[index % matchdays] += pair }
         return buckets
     }
 
@@ -376,6 +436,8 @@ object ChampionsLeagueEngine {
         random: Random,
         idProvider: () -> Long
     ): Pair<List<KnockoutTie>, List<Match>> {
+        val competition = state.competition
+        val start = knockoutStart(competition)
         val ordered = state.sortedTable().map { it.clubId }
         if (ordered.size < 24) return emptyList<KnockoutTie>() to emptyList()
 
@@ -389,19 +451,19 @@ object ChampionsLeagueEngine {
             val tieId = idProvider()
             val leg1Id = idProvider()
             val leg2Id = idProvider()
-            val leg1Date = SeasonCalendar.knockoutDate(KNOCKOUT_FIRST_MATCHDAY)
-            val leg2Date = SeasonCalendar.knockoutDate(KNOCKOUT_FIRST_MATCHDAY + 1)
+            val leg1Date = SeasonCalendar.knockoutDate(start)
+            val leg2Date = SeasonCalendar.knockoutDate(start + 1)
 
             matches += Match(
-                id = leg1Id, leagueId = League.CHAMPIONS_LEAGUE.id, matchday = KNOCKOUT_FIRST_MATCHDAY,
+                id = leg1Id, leagueId = League.forCompetition(competition).id, matchday = start,
                 homeClubId = lowSeed, awayClubId = highSeed, status = MatchStatus.SCHEDULED,
-                competition = CompetitionType.CHAMPIONS_LEAGUE, date = leg1Date,
+                competition = competition, date = leg1Date,
                 tieId = tieId, leg = 1, competitionRound = KnockoutRound.PLAYOFF.order
             )
             matches += Match(
-                id = leg2Id, leagueId = League.CHAMPIONS_LEAGUE.id, matchday = KNOCKOUT_FIRST_MATCHDAY + 1,
+                id = leg2Id, leagueId = League.forCompetition(competition).id, matchday = start + 1,
                 homeClubId = highSeed, awayClubId = lowSeed, status = MatchStatus.SCHEDULED,
-                competition = CompetitionType.CHAMPIONS_LEAGUE, date = leg2Date,
+                competition = competition, date = leg2Date,
                 tieId = tieId, leg = 2, competitionRound = KnockoutRound.PLAYOFF.order
             )
             ties += KnockoutTie(
@@ -422,15 +484,16 @@ object ChampionsLeagueEngine {
         round: KnockoutRound,
         advancing: List<Long>,
         startDate: GameDate,
-        idProvider: () -> Long
+        idProvider: () -> Long,
+        competition: CompetitionType = CompetitionType.CHAMPIONS_LEAGUE
     ): Pair<List<KnockoutTie>, List<Match>> {
-        val matchday = KNOCKOUT_FIRST_MATCHDAY + round.order * 2
+        val start = knockoutStart(competition)
+        val matchday = start + round.order * 2
         val ties = mutableListOf<KnockoutTie>()
         val matches = mutableListOf<Match>()
         val ordered = advancing.sorted()
 
         var index = 0
-        var pairing = 0
         while (index + 1 < ordered.size) {
             val highSeed = ordered[index]
             val lowSeed = ordered[index + 1]
@@ -442,16 +505,16 @@ object ChampionsLeagueEngine {
             val leg2Date = SeasonCalendar.knockoutDate(matchday + 1)
 
             matches += Match(
-                id = leg1Id, leagueId = League.CHAMPIONS_LEAGUE.id, matchday = matchday,
+                id = leg1Id, leagueId = League.forCompetition(competition).id, matchday = matchday,
                 homeClubId = lowSeed, awayClubId = highSeed, status = MatchStatus.SCHEDULED,
-                competition = CompetitionType.CHAMPIONS_LEAGUE, date = leg1Date,
+                competition = competition, date = leg1Date,
                 tieId = tieId, leg = 1, competitionRound = round.order
             )
             if (leg2Id != null) {
                 matches += Match(
-                    id = leg2Id, leagueId = League.CHAMPIONS_LEAGUE.id, matchday = matchday + 1,
+                    id = leg2Id, leagueId = League.forCompetition(competition).id, matchday = matchday + 1,
                     homeClubId = highSeed, awayClubId = lowSeed, status = MatchStatus.SCHEDULED,
-                    competition = CompetitionType.CHAMPIONS_LEAGUE, date = leg2Date,
+                    competition = competition, date = leg2Date,
                     tieId = tieId, leg = 2, competitionRound = round.order
                 )
             }
@@ -460,12 +523,15 @@ object ChampionsLeagueEngine {
                 highSeedClubId = highSeed, lowSeedClubId = lowSeed,
                 firstLegMatchId = leg1Id, secondLegMatchId = leg2Id
             )
-            pairing++
         }
         return ties to matches
     }
 
-    /** The sixteen clubs that reach the Round of 16. */
+    /**
+     * Advances the bracket. Given the winners of the previous round it creates the
+     * next round's ties. Used for R16 (from league-phase top 8 + play-off winners),
+     * then quarter-finals, semi-finals and the final.
+     */
     fun roundOf16Field(state: ChampionsLeagueState, playoffWinners: List<Long>): List<Long> {
         val topEight = state.sortedTable().take(ChampionsLeagueState.DIRECT_QUALIFIERS).map { it.clubId }
         return (topEight + playoffWinners).distinct()
@@ -553,18 +619,20 @@ object ChampionsLeagueEngine {
         season: String,
         startDate: GameDate,
         random: Random,
-        idProvider: () -> Long
+        idProvider: () -> Long,
+        competition: CompetitionType = CompetitionType.CHAMPIONS_LEAGUE
     ): Pair<ChampionsLeagueState, List<Match>> {
-        val participants = buildParticipants(career)
+        val participants = participantsFor(career, competition)
         if (participants.size < ChampionsLeagueState.PARTICIPANTS) {
-            return ChampionsLeagueState(season = season, active = false) to emptyList()
+            return ChampionsLeagueState(season = season, competition = competition, active = false) to emptyList()
         }
         val pots = buildPots(career.clubs, participants)
         val (matches, table) = generateLeaguePhase(
-            career.clubs, participants, pots, startDate, random, idProvider
+            career.clubs, participants, pots, startDate, random, idProvider, competition
         )
         val state = ChampionsLeagueState(
             season = season,
+            competition = competition,
             participantIds = participants,
             pots = pots,
             table = table,
@@ -577,7 +645,7 @@ object ChampionsLeagueEngine {
 
     /** Applies a played result to the league-phase table. */
     fun applyLeagueResult(state: ChampionsLeagueState, match: Match): ChampionsLeagueState {
-        if (match.competition != CompetitionType.CHAMPIONS_LEAGUE) return state
+        if (match.competition != state.competition) return state
         if (match.tieId != null) return state // knockout games do not touch the table
         val rows = state.table.toMutableList()
         val homeIdx = rows.indexOfFirst { it.clubId == match.homeClubId }
@@ -605,19 +673,31 @@ object ChampionsLeagueEngine {
         random: Random,
         idProvider: () -> Long
     ): Career {
-        var state = career.championsLeague
+        var result = career
+        for (competition in europeanCompetitions) {
+            result = progressOne(result, competition, random, idProvider)
+        }
+        return result
+    }
+
+    /** Advances a single continental competition's knockout stage. */
+    private fun progressOne(
+        career: Career,
+        competition: CompetitionType,
+        random: Random,
+        idProvider: () -> Long
+    ): Career {
+        var state = career.europeanState(competition)
         if (!state.active) return career
 
         var fixtures = career.fixtures
 
-        // ---- Build the play-offs once all eight league-phase matchdays are done ----
+        // ---- Build the play-offs once the league phase is complete ----
         val leaguePhasePlayed = fixtures
-            .filter { it.competition == CompetitionType.CHAMPIONS_LEAGUE && it.tieId == null }
+            .filter { it.competition == competition && it.tieId == null }
             .all { it.isPlayed }
 
-        if (leaguePhasePlayed && state.ties.isEmpty() &&
-            state.sortedTable().size >= 24
-        ) {
+        if (leaguePhasePlayed && state.ties.isEmpty() && state.sortedTable().size >= 24) {
             val (ties, matches) = buildPlayoffTies(state, GameDate(2027, 2, 16), random, idProvider)
             fixtures = fixtures + matches
             state = state.copy(ties = ties)
@@ -656,7 +736,7 @@ object ChampionsLeagueEngine {
             } else winners
 
             val (newTies, newMatches) = buildNextRound(
-                nextRound, entrants, GameDate(2027, 2, 16), idProvider
+                nextRound, entrants, GameDate(2027, 2, 16), idProvider, competition
             )
             fixtures = fixtures + newMatches
             state = state.copy(ties = state.ties + newTies)
@@ -668,8 +748,8 @@ object ChampionsLeagueEngine {
             state = state.copy(winnerClubId = finalTie.winnerClubId)
         }
 
-        if (fixtures === career.fixtures && state == career.championsLeague) return career
-        return career.copy(championsLeague = state, fixtures = fixtures)
+        if (fixtures === career.fixtures && state == career.europeanState(competition)) return career
+        return career.withEuropeanState(competition, state).copy(fixtures = fixtures)
     }
 
     /** The club that won the competition, or null while it is still running. */

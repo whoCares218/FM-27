@@ -584,6 +584,8 @@ fun formChar(career: Career, match: Match): Char {
 /** Short competition tag shown on fixture cards. */
 fun Match.competitionShortLabel(): String = when (competition) {
     com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE -> "Champions League"
+    com.footymanager.simulator.domain.model.CompetitionType.EUROPA_LEAGUE -> "Europa League"
+    com.footymanager.simulator.domain.model.CompetitionType.CONFERENCE_LEAGUE -> "Conference League"
     com.footymanager.simulator.domain.model.CompetitionType.DOMESTIC_CUP -> "Domestic Cup"
     com.footymanager.simulator.domain.model.CompetitionType.FRIENDLY -> "Friendly"
     com.footymanager.simulator.domain.model.CompetitionType.LEAGUE -> "Matchday $matchday"

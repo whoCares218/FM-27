@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -37,9 +39,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.KnockoutRound
 import com.footymanager.simulator.domain.model.Stadium
 import com.footymanager.simulator.domain.model.UclStatus
+import com.footymanager.simulator.domain.model.europeanCompetitions
 import com.footymanager.simulator.ui.components.ClubCrest
 import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
@@ -62,20 +66,53 @@ fun ChampionsLeagueScreen(
     career: Career,
     onOpenClub: (Long) -> Unit = {}
 ) {
-    val state = career.championsLeague
+    EuropeanCompetitionScreen(
+        career = career,
+        competition = CompetitionType.CHAMPIONS_LEAGUE,
+        onOpenClub = onOpenClub
+    )
+}
+
+/**
+ * A continental competition hub. The Champions League, Europa League and
+ * Conference League share the same 36-team league-phase shape, so one screen
+ * renders all three; [competition] decides which table, fixtures and bracket are
+ * shown. The user can switch competition from the selector at the top.
+ */
+@Composable
+fun EuropeanCompetitionScreen(
+    career: Career,
+    competition: CompetitionType = CompetitionType.CHAMPIONS_LEAGUE,
+    onOpenClub: (Long) -> Unit = {}
+) {
+    var selected by remember(competition) { mutableStateOf(competition) }
+    val state = career.europeanState(selected)
+    val leaguePhaseGames = state.leaguePhaseMatchdays
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { ScreenTitle("Champions League", "League phase · ${career.season}") }
+        item { ScreenTitle(selected.label, "League phase · ${career.season}") }
+
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(europeanCompetitions, key = { it.name }) { option ->
+                    SelectorChip(
+                        label = option.label,
+                        selected = option == selected,
+                        onClick = { selected = option }
+                    )
+                }
+            }
+        }
 
         if (!state.active) {
             item {
                 FmCard {
                     Text(
-                        text = "Your club has not qualified for the Champions League this season.",
+                        text = "No clubs are entered in the ${selected.label} this season.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -194,7 +231,7 @@ fun ChampionsLeagueScreen(
                             Spacer(Modifier.width(8.dp))
                             Column {
                                 Text(
-                                    text = "Champions League winners",
+                                    text = "${selected.label} winners",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -202,6 +239,62 @@ fun ChampionsLeagueScreen(
                                     text = career.club(state.winnerClubId)?.name ?: "-",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (state.active) {
+            item {
+                FmCard {
+                    SectionHeader("Your ${selected.label} fixtures") {
+                        Text(
+                            text = "MD ${state.currentMatchday.coerceAtMost(leaguePhaseGames)}/$leaguePhaseGames",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val fixtures = career.europeanFixturesFor(career.userClubId, selected)
+                    if (fixtures.isEmpty()) {
+                        Text(
+                            text = "Your club is not in the ${selected.label}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        fixtures.forEach { match ->
+                            val opponent = career.club(match.opponentOf(career.userClubId))
+                            val isHome = match.isHomeFor(career.userClubId)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isHome) "H" else "A",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isHome) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.width(16.dp)
+                                )
+                                ClubCrest(club = opponent ?: career.userClub, size = 20.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = opponent?.name ?: "-",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = if (match.isPlayed)
+                                        "${match.goalsFor(career.userClubId)}-${match.goalsAgainst(career.userClubId)}"
+                                    else "MD${match.competitionRound}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }

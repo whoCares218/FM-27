@@ -2016,6 +2016,8 @@ private fun eventAccent(type: MatchEventType): Color = when (type) {
 
 private fun com.footymanager.simulator.domain.model.Match.competitionLabel(): String = when (competition) {
     com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE -> "Champions League"
+    com.footymanager.simulator.domain.model.CompetitionType.EUROPA_LEAGUE -> "Europa League"
+    com.footymanager.simulator.domain.model.CompetitionType.CONFERENCE_LEAGUE -> "Conference League"
     com.footymanager.simulator.domain.model.CompetitionType.DOMESTIC_CUP -> "Domestic Cup"
     com.footymanager.simulator.domain.model.CompetitionType.FRIENDLY -> "Friendly"
     com.footymanager.simulator.domain.model.CompetitionType.LEAGUE -> "League"

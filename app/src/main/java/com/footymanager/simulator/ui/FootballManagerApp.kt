@@ -515,6 +515,7 @@ private fun AppNavHost(
                     career = career,
                     onOpenLeague = { navController.navigate(Routes.LEAGUE_TABLE) },
                     onOpenChampionsLeague = { navController.navigate(Routes.CHAMPIONS_LEAGUE) },
+                    onOpenEurope = { navController.navigate(Routes.EUROPE) },
                     onOpenFixtures = { navController.navigate(Routes.FIXTURES) }
                 )
             }
@@ -538,6 +539,16 @@ private fun AppNavHost(
             if (career != null) {
                 com.footymanager.simulator.ui.screens.ChampionsLeagueScreen(
                     career = career,
+                    onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
+                )
+            }
+        }
+
+        composable(Routes.EUROPE) {
+            if (career != null) {
+                com.footymanager.simulator.ui.screens.EuropeanCompetitionScreen(
+                    career = career,
+                    competition = com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE,
                     onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
                 )
             }

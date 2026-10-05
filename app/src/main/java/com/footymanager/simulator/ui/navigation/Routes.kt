@@ -44,6 +44,7 @@ object Routes {
     const val TRAINING = "training"
     const val FIXTURES = "fixtures"
     const val CHAMPIONS_LEAGUE = "champions_league"
+    const val EUROPE = "europe"
     const val STADIUM = "stadium"
     const val SPONSORS = "sponsors"
     const val REWARDS = "rewards"

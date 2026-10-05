@@ -156,6 +156,18 @@ data class League(
             prizeMoneyPerPlace = 0L, tier = 1
         )
 
+        val EUROPA_LEAGUE = League(
+            id = "UEL", name = "Europa League", country = "Europe", reputation = 86,
+            relegationPlaces = 0, championsLeaguePlaces = 0,
+            prizeMoneyPerPlace = 0L, tier = 1
+        )
+
+        val CONFERENCE_LEAGUE = League(
+            id = "UECL", name = "Conference League", country = "Europe", reputation = 78,
+            relegationPlaces = 0, championsLeaguePlaces = 0,
+            prizeMoneyPerPlace = 0L, tier = 1
+        )
+
         val all: List<League> = listOf(
             PREMIER_LEAGUE, CHAMPIONSHIP, LA_LIGA, SERIE_A, BUNDESLIGA, LIGUE_1,
             PRIMEIRA, EREDIVISIE
@@ -164,8 +176,18 @@ data class League(
         /** Leagues that play a domestic round-robin schedule. */
         val domestic: List<League> = all
 
-        fun byId(id: String): League = all.firstOrNull { it.id == id }
-            ?: if (id == CHAMPIONS_LEAGUE.id) CHAMPIONS_LEAGUE else PREMIER_LEAGUE
+        /** The continental competitions, keyed by their competition type. */
+        val european: Map<CompetitionType, League> = mapOf(
+            CompetitionType.CHAMPIONS_LEAGUE to CHAMPIONS_LEAGUE,
+            CompetitionType.EUROPA_LEAGUE to EUROPA_LEAGUE,
+            CompetitionType.CONFERENCE_LEAGUE to CONFERENCE_LEAGUE
+        )
+
+        fun forCompetition(competition: CompetitionType): League =
+            european[competition] ?: PREMIER_LEAGUE
+
+        fun byId(id: String): League = (all + european.values).firstOrNull { it.id == id }
+            ?: PREMIER_LEAGUE
     }
 }
 
@@ -244,8 +266,7 @@ data class Match(
 ) {
     val isPlayed: Boolean get() = status == MatchStatus.PLAYED
 
-    val isKnockout: Boolean get() = competition == CompetitionType.CHAMPIONS_LEAGUE &&
-        tieId != null
+    val isKnockout: Boolean get() = competition.isEuropean && tieId != null
 
     val wentToExtraTime: Boolean
         get() = homeGoalsExtraTime != 0 || awayGoalsExtraTime != 0

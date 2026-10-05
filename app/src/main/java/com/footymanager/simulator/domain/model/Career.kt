@@ -75,6 +75,14 @@ data class Career(
     val sponsorOffers: List<SponsorOffer> = emptyList(),
     /** Champions League state, or [ChampionsLeagueState.EMPTY] when not involved. */
     val championsLeague: ChampionsLeagueState = ChampionsLeagueState.EMPTY,
+    /** Europa League state, or an inactive state when not involved. */
+    val europaLeague: ChampionsLeagueState = ChampionsLeagueState(
+        season = "", competition = CompetitionType.EUROPA_LEAGUE
+    ),
+    /** Conference League state, or an inactive state when not involved. */
+    val conferenceLeague: ChampionsLeagueState = ChampionsLeagueState(
+        season = "", competition = CompetitionType.CONFERENCE_LEAGUE
+    ),
     /** Rewarded-ad allowance and totals. */
     val adRewards: AdRewardState = AdRewardState(),
     /** Season number the sponsorship was signed for, so it expires correctly. */
@@ -177,6 +185,32 @@ data class Career(
     fun uclFixturesFor(clubId: Long): List<Match> =
         fixtures.filter { it.competition == CompetitionType.CHAMPIONS_LEAGUE && it.involves(clubId) }
             .sortedWith(compareBy({ it.matchday }, { it.leg }))
+
+    /** The state of a given continental competition. */
+    fun europeanState(competition: CompetitionType): ChampionsLeagueState = when (competition) {
+        CompetitionType.CHAMPIONS_LEAGUE -> championsLeague
+        CompetitionType.EUROPA_LEAGUE -> europaLeague
+        CompetitionType.CONFERENCE_LEAGUE -> conferenceLeague
+        else -> ChampionsLeagueState.EMPTY
+    }
+
+    /** Returns a copy of the career with one continental competition's state replaced. */
+    fun withEuropeanState(competition: CompetitionType, state: ChampionsLeagueState): Career =
+        when (competition) {
+            CompetitionType.CHAMPIONS_LEAGUE -> copy(championsLeague = state)
+            CompetitionType.EUROPA_LEAGUE -> copy(europaLeague = state)
+            CompetitionType.CONFERENCE_LEAGUE -> copy(conferenceLeague = state)
+            else -> this
+        }
+
+    /** A club's fixtures in one continental competition, ordered by matchday. */
+    fun europeanFixturesFor(clubId: Long, competition: CompetitionType): List<Match> =
+        fixtures.filter { it.competition == competition && it.involves(clubId) }
+            .sortedWith(compareBy({ it.matchday }, { it.leg }))
+
+    /** Every fixture in a given competition. */
+    fun fixturesInCompetition(competition: CompetitionType): List<Match> =
+        fixtures.filter { it.competition == competition }
 
     /** The user's next Champions League fixture, if any. */
     fun nextUclFixture(): Match? =

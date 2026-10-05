@@ -27,6 +27,30 @@ object SeasonCalendar {
     /** The domestic rounds on which each UCL league-phase matchday is played. */
     val uclRoundSchedule: List<Int> = uclRounds.toList().sorted()
 
+    /** The Europa League shares the same midweek slots as the Champions League. */
+    val europaRoundSchedule: List<Int> = uclRounds.toList().sorted()
+
+    /** The Conference League plays six league-phase matchdays. */
+    val conferenceRoundSchedule: List<Int> = uclRounds.toList().sorted().take(6)
+
+    /** The midweek rounds carrying a given continental competition's league phase. */
+    fun europeanRoundSchedule(competition: CompetitionType): List<Int> = when (competition) {
+        CompetitionType.EUROPA_LEAGUE -> europaRoundSchedule
+        CompetitionType.CONFERENCE_LEAGUE -> conferenceRoundSchedule
+        else -> uclRoundSchedule
+    }
+
+    /**
+     * The domestic round on which a continental competition's knockout stage
+     * begins. The competitions are staggered so their brackets do not all fall in
+     * the same weeks.
+     */
+    fun knockoutFirstMatchday(competition: CompetitionType): Int = when (competition) {
+        CompetitionType.EUROPA_LEAGUE -> 19
+        CompetitionType.CONFERENCE_LEAGUE -> 20
+        else -> 18
+    }
+
     /**
      * Applies dates to a full fixture list.
      *
@@ -37,9 +61,10 @@ object SeasonCalendar {
         return fixtures.map { match ->
             val date = when (match.competition) {
                 CompetitionType.LEAGUE -> leagueDate(match.matchday)
-                CompetitionType.CHAMPIONS_LEAGUE ->
+                CompetitionType.CHAMPIONS_LEAGUE, CompetitionType.EUROPA_LEAGUE,
+                CompetitionType.CONFERENCE_LEAGUE ->
                     if (match.tieId != null) knockoutDate(match.matchday)
-                    else uclLeaguePhaseDate(match.competitionRound.coerceAtLeast(1))
+                    else europeanLeaguePhaseDate(match.competition, match.competitionRound.coerceAtLeast(1))
                 CompetitionType.DOMESTIC_CUP -> cupDate(match.matchday)
                 CompetitionType.FRIENDLY -> leagueDate(match.matchday).plusDays(-3)
             }
@@ -59,6 +84,15 @@ object SeasonCalendar {
         val round = uclRounds.toList().sorted().getOrElse(uclMatchday - 1) {
             // Beyond the eight designated rounds, keep spacing sensible.
             uclRounds.max() + (uclMatchday - uclRounds.size) * 3
+        }
+        return SEASON_START.plusDays((round - 1) * 7 - 3)
+    }
+
+    /** The league-phase date for any continental competition. */
+    fun europeanLeaguePhaseDate(competition: CompetitionType, matchday: Int): GameDate {
+        val schedule = europeanRoundSchedule(competition)
+        val round = schedule.getOrElse(matchday - 1) {
+            schedule.max() + (matchday - schedule.size) * 3
         }
         return SEASON_START.plusDays((round - 1) * 7 - 3)
     }

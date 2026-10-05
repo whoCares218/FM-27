@@ -5,6 +5,9 @@ import com.footymanager.simulator.domain.engine.SponsorshipEngine
 import com.footymanager.simulator.domain.model.BoardObjective
 import com.footymanager.simulator.domain.model.BoardState
 import com.footymanager.simulator.domain.model.Career
+import com.footymanager.simulator.domain.model.ChampionsLeagueState
+import com.footymanager.simulator.domain.model.CompetitionType
+import com.footymanager.simulator.domain.model.europeanCompetitions
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.Difficulty
 import com.footymanager.simulator.domain.model.Formation
@@ -80,7 +83,7 @@ object CareerFactory {
             table[league.id] = leagueClubs.map { TableRow(clubId = it.id) }
         }
 
-        // ---- Champions League (current 36-team league-phase format) ----
+        // ---- Continental competitions (current 36-team league-phase format) ----
         val userClub = clubs.first { it.id == request.clubId }
         val baseCareer = Career(
             saveId = "seed",
@@ -95,14 +98,22 @@ object CareerFactory {
             fixtures = emptyList(),
             table = emptyMap()
         )
-        val (uclState, uclFixtures) = ChampionsLeagueEngine.createSeason(
-            career = baseCareer,
-            season = Career.CURRENT_SEASON,
-            startDate = SeasonCalendar.SEASON_START,
-            random = random,
-            idProvider = idProvider
-        )
-        fixtures += uclFixtures
+        val europeanStates = mutableMapOf<CompetitionType, ChampionsLeagueState>()
+        for (competition in europeanCompetitions) {
+            val (state, competitionFixtures) = ChampionsLeagueEngine.createSeason(
+                career = baseCareer,
+                season = Career.CURRENT_SEASON,
+                startDate = SeasonCalendar.SEASON_START,
+                random = random,
+                idProvider = idProvider,
+                competition = competition
+            )
+            europeanStates[competition] = state
+            fixtures += competitionFixtures
+        }
+        val uclState = europeanStates.getValue(CompetitionType.CHAMPIONS_LEAGUE)
+        val uelState = europeanStates.getValue(CompetitionType.EUROPA_LEAGUE)
+        val ueclState = europeanStates.getValue(CompetitionType.CONFERENCE_LEAGUE)
 
         // Every fixture gets a real calendar date.
         val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
@@ -173,7 +184,9 @@ object CareerFactory {
             lastSavedEpochMs = System.currentTimeMillis(),
             stadium = stadium,
             sponsorOffers = sponsorOffers,
-            championsLeague = uclState
+            championsLeague = uclState,
+            europaLeague = uelState,
+            conferenceLeague = ueclState
         )
     }
 

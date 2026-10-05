@@ -39,6 +39,7 @@ import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.League
 import com.footymanager.simulator.domain.model.Match
 import com.footymanager.simulator.domain.model.TableRow
+import com.footymanager.simulator.domain.model.europeanCompetitions
 import com.footymanager.simulator.ui.components.ClubCrest
 import com.footymanager.simulator.ui.components.EmptyState
 import com.footymanager.simulator.ui.components.FmCard
@@ -54,6 +55,7 @@ fun CompetitionHubScreen(
     career: Career,
     onOpenLeague: () -> Unit,
     onOpenChampionsLeague: () -> Unit,
+    onOpenEurope: () -> Unit = onOpenChampionsLeague,
     onOpenFixtures: () -> Unit
 ) {
     var tab by remember { mutableStateOf(HubTab.DOMESTIC) }
@@ -82,7 +84,7 @@ fun CompetitionHubScreen(
                 item { DomesticTab(career = career, onOpenLeague = onOpenLeague, onOpenFixtures = onOpenFixtures) }
             }
             HubTab.EUROPE -> {
-                item { EuropeTab(career = career, onOpenChampionsLeague = onOpenChampionsLeague) }
+                item { EuropeTab(career = career, onOpenChampionsLeague = onOpenEurope) }
             }
             HubTab.CUPS -> {
                 item { CupsTab(career = career, onOpenFixtures = onOpenFixtures) }
@@ -169,20 +171,17 @@ private fun EuropeTab(career: Career, onOpenChampionsLeague: () -> Unit) {
     val ucl = career.championsLeague
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         FmCard(onClick = onOpenChampionsLeague) {
-            SectionHeader("Champions League") {
+            SectionHeader("Continental football") {
                 Text(
-                    text = if (ucl.active) "In progress" else "Not qualified",
+                    text = if (ucl.active) "In progress" else "Pre-season",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (ucl.active) StatColors.elite else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = if (ucl.active) {
-                    "The 36-team league phase, knockout bracket and European statistics."
-                } else {
-                    "Follow the league phase, knockouts and European statistics."
-                },
+                text = "Open the Champions League, Europa League and Conference League " +
+                    "league phases, knockout brackets and European statistics.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -194,63 +193,30 @@ private fun EuropeTab(career: Career, onOpenChampionsLeague: () -> Unit) {
             )
         }
 
-        if (ucl.active) {
-            FmCard(padding = 10.dp) {
-                SectionHeader("Your league phase") {
+        europeanCompetitions.forEach { competition ->
+            val state = career.europeanState(competition)
+            FmCard(onClick = onOpenChampionsLeague) {
+                SectionHeader(competition.label) {
                     Text(
-                        text = "MD ${ucl.currentMatchday.coerceAtMost(8)}/8",
+                        text = if (state.active) "MD ${state.currentMatchday.coerceAtMost(state.leaguePhaseMatchdays)}/${state.leaguePhaseMatchdays}"
+                        else "Not entered",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = if (state.active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                val fixtures = remember(career.fixtures) { career.uclFixturesFor(career.userClubId) }
-                val next = fixtures.firstOrNull { !it.isPlayed }
-                if (fixtures.isEmpty()) {
-                    Text(
-                        text = "No European fixtures scheduled.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    fixtures.take(4).forEach { match ->
-                        val opponent = career.club(match.opponentOf(career.userClubId))
-                        val isHome = match.isHomeFor(career.userClubId)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (isHome) "H" else "A",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isHome) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.width(16.dp)
-                            )
-                            ClubCrest(club = opponent ?: career.userClub, size = 20.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = opponent?.name ?: "-",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = if (match.isPlayed)
-                                    "${match.goalsFor(career.userClubId)}-${match.goalsAgainst(career.userClubId)}"
-                                else if (match.id == next?.id) "Next" else "MD${match.competitionRound}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (match.id == next?.id) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
+                Spacer(Modifier.height(6.dp))
+                val userIn = state.participantIds.contains(career.userClubId)
+                Text(
+                    text = if (userIn) {
+                        val pos = state.positionOf(career.userClubId)
+                        "Your club: position ${if (pos == 0) "-" else "$pos"} of 36"
+                    } else {
+                        "36-team league phase with knockouts."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

@@ -6,6 +6,8 @@ import com.footymanager.simulator.domain.model.BoardObjective
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.ChampionsLeagueState
 import com.footymanager.simulator.domain.model.CompetitionType
+import com.footymanager.simulator.domain.model.europeanCompetitions
+import com.footymanager.simulator.domain.model.isEuropean
 import com.footymanager.simulator.domain.model.FinanceLedgerEntry
 import com.footymanager.simulator.domain.model.Formation
 import com.footymanager.simulator.domain.model.LedgerCategory
@@ -384,13 +386,17 @@ object SeasonEngine {
             } else career.clubs
         )
 
-        // ---- Champions League: update the league-phase table ----
-        val withUcl = if (match.competition == CompetitionType.CHAMPIONS_LEAGUE && match.tieId == null) {
-            withLedger.copy(championsLeague = ChampionsLeagueEngine.applyLeagueResult(withLedger.championsLeague, match))
+        // ---- Continental football: update the correct competition's table ----
+        val withEurope = if (match.competition.isEuropean && match.tieId == null) {
+            val state = withLedger.europeanState(match.competition)
+            withLedger.withEuropeanState(
+                match.competition,
+                ChampionsLeagueEngine.applyLeagueResult(state, match)
+            )
         } else withLedger
 
         // Wages are paid once per week by advanceWeek, not once per fixture.
-        return withUcl
+        return withEurope
     }
 
     private fun styleFatigue(career: Career, clubId: Long, fallback: Double): Double =
@@ -516,18 +522,18 @@ object SeasonEngine {
             current = updated
         }
 
-        // A Champions League matchday shares this domestic round, so every
-        // European fixture must be played at the same time to keep the table and
-        // the bracket consistent.
-        val uclRound = uclMatchdayForRound(matchday)
-        if (uclRound != null) {
-            val uclPending = current.fixtures.filter {
-                it.competition == CompetitionType.CHAMPIONS_LEAGUE &&
-                    it.competitionRound == uclRound &&
+        // A continental matchday shares this domestic round, so every European
+        // fixture must be played at the same time to keep each competition's table
+        // and bracket consistent.
+        for (competition in europeanCompetitions) {
+            val round = europeanMatchdayForRound(competition, matchday) ?: continue
+            val pendingEuropean = current.fixtures.filter {
+                it.competition == competition &&
+                    it.competitionRound == round &&
                     it.tieId == null &&
                     !it.isPlayed
             }
-            for (match in uclPending) {
+            for (match in pendingEuropean) {
                 val (updated, _) = simulateFixture(current, match, random, userMatch = false)
                 current = updated
             }
@@ -536,7 +542,7 @@ object SeasonEngine {
         // Knockout legs are scheduled on their own matchdays and involve AI clubs
         // that may still be alive in the competition.
         val knockoutPending = current.fixtures.filter {
-            it.competition == CompetitionType.CHAMPIONS_LEAGUE &&
+            it.competition.isEuropean &&
                 it.tieId != null &&
                 it.matchday == matchday &&
                 !it.isPlayed &&
@@ -550,8 +556,12 @@ object SeasonEngine {
     }
 
     /** Maps a domestic round onto the UCL league-phase matchday it hosts, if any. */
-    fun uclMatchdayForRound(domesticRound: Int): Int? {
-        val idx = SeasonCalendar.uclRoundSchedule.indexOf(domesticRound)
+    fun uclMatchdayForRound(domesticRound: Int): Int? =
+        europeanMatchdayForRound(CompetitionType.CHAMPIONS_LEAGUE, domesticRound)
+
+    /** Maps a domestic round onto a competition's league-phase matchday, if any. */
+    fun europeanMatchdayForRound(competition: CompetitionType, domesticRound: Int): Int? {
+        val idx = SeasonCalendar.europeanRoundSchedule(competition).indexOf(domesticRound)
         return if (idx >= 0) idx + 1 else null
     }
 
@@ -635,15 +645,16 @@ object SeasonEngine {
             idCounter = idCounter
         )
 
-        // ---- Champions League matchday ticks forward on its designated rounds ----
+        // ---- Continental matchday ticks forward on its designated rounds ----
         val playedRound = career.matchdayIndex + 1
-        val uclPlayed = uclMatchdayForRound(playedRound)
-        if (uclPlayed != null && updated.championsLeague.active) {
-            updated = updated.copy(
-                championsLeague = updated.championsLeague.copy(
-                    currentMatchday = (uclPlayed + 1).coerceAtMost(
-                        ChampionsLeagueState.LEAGUE_PHASE_MATCHDAYS + 1
-                    )
+        for (competition in europeanCompetitions) {
+            val played = europeanMatchdayForRound(competition, playedRound) ?: continue
+            val state = updated.europeanState(competition)
+            if (!state.active) continue
+            updated = updated.withEuropeanState(
+                competition,
+                state.copy(
+                    currentMatchday = (played + 1).coerceAtMost(state.leaguePhaseMatchdays + 1)
                 )
             )
         }
@@ -968,22 +979,51 @@ object SeasonEngine {
         }
         val newSponsorOffers = SponsorshipEngine.generateOffers(userClub, random)
 
-        // ---- Champions League for the new season ----
+        // ---- Continental football for the new season ----
         val seedCareer = career.copy(
             season = nextSeasonLabel,
             seasonNumber = nextSeasonNumber,
             clubs = refreshedClubs,
             lastStandings = previousStandings,
-            championsLeague = ChampionsLeagueState(season = nextSeasonLabel, active = false)
+            championsLeague = ChampionsLeagueState(
+                season = nextSeasonLabel,
+                competition = CompetitionType.CHAMPIONS_LEAGUE,
+                active = false
+            ),
+            europaLeague = ChampionsLeagueState(
+                season = nextSeasonLabel,
+                competition = CompetitionType.EUROPA_LEAGUE,
+                active = false
+            ),
+            conferenceLeague = ChampionsLeagueState(
+                season = nextSeasonLabel,
+                competition = CompetitionType.CONFERENCE_LEAGUE,
+                active = false
+            )
         )
-        val (uclState, uclFixtures) = ChampionsLeagueEngine.createSeason(
-            career = seedCareer,
-            season = nextSeasonLabel,
-            startDate = newStartDate,
-            random = random,
-            idProvider = { ++idCounter }
+        var uclState = ChampionsLeagueState(season = nextSeasonLabel, active = false)
+        var uelState = ChampionsLeagueState(
+            season = nextSeasonLabel, competition = CompetitionType.EUROPA_LEAGUE, active = false
         )
-        fixtures += uclFixtures
+        var ueclState = ChampionsLeagueState(
+            season = nextSeasonLabel, competition = CompetitionType.CONFERENCE_LEAGUE, active = false
+        )
+        for (competition in europeanCompetitions) {
+            val (state, matches) = ChampionsLeagueEngine.createSeason(
+                career = seedCareer,
+                season = nextSeasonLabel,
+                startDate = newStartDate,
+                random = random,
+                idProvider = { ++idCounter },
+                competition = competition
+            )
+            fixtures += matches
+            when (competition) {
+                CompetitionType.EUROPA_LEAGUE -> uelState = state
+                CompetitionType.CONFERENCE_LEAGUE -> ueclState = state
+                else -> uclState = state
+            }
+        }
 
         val datedFixtures = SeasonCalendar.assignDates(fixtures, random)
 
@@ -1043,6 +1083,8 @@ object SeasonEngine {
             lastMatchdayFinance = null,
             idCounter = idCounter,
             championsLeague = uclState,
+            europaLeague = uelState,
+            conferenceLeague = ueclState,
             lastStandings = previousStandings,
             sponsorOffers = newSponsorOffers,
             sponsorship = null,
