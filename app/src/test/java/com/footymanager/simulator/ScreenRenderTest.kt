@@ -758,4 +758,53 @@ class ScreenRenderTest {
         composeRule.onNodeWithText("Transfer history", substring = false).assertExists()
         composeRule.onNodeWithText(player.name, substring = true).assertExists()
     }
+
+    @Test
+    fun `the competition hub renders domestic and european sections`() {
+        val c = career()
+        setScreen {
+            com.footymanager.simulator.ui.screens.CompetitionHubScreen(
+                career = c,
+                onOpenLeague = {},
+                onOpenChampionsLeague = {},
+                onOpenFixtures = {}
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onNodeWithText("Domestic").assertExists()
+        scrollToAndClick("Europe")
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("CONTINENTAL FOOTBALL", substring = true))
+        composeRule.onNodeWithText("CONTINENTAL FOOTBALL", substring = true).assertExists()
+    }
+
+    @Test
+    fun `the Europa League renders its own table`() {
+        val c = career()
+        setScreen {
+            com.footymanager.simulator.ui.screens.EuropeanCompetitionScreen(
+                career = c,
+                competition = com.footymanager.simulator.domain.model.CompetitionType.EUROPA_LEAGUE
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onAllNodes(
+            hasText(com.footymanager.simulator.domain.model.CompetitionType.EUROPA_LEAGUE.label, substring = true)
+        )[0].assertExists()
+    }
+
+    @Test
+    fun `the Conference League renders its own table`() {
+        val c = career()
+        setScreen {
+            com.footymanager.simulator.ui.screens.EuropeanCompetitionScreen(
+                career = c,
+                competition = com.footymanager.simulator.domain.model.CompetitionType.CONFERENCE_LEAGUE
+            )
+        }
+        composeRule.onRoot().assertExists()
+        composeRule.onAllNodes(
+            hasText(com.footymanager.simulator.domain.model.CompetitionType.CONFERENCE_LEAGUE.label, substring = true)
+        )[0].assertExists()
+    }
 }

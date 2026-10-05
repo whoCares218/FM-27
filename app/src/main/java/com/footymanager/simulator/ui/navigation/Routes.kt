@@ -45,6 +45,11 @@ object Routes {
     const val FIXTURES = "fixtures"
     const val CHAMPIONS_LEAGUE = "champions_league"
     const val EUROPE = "europe"
+
+    /** The continental hub, optionally focused on one competition. */
+    const val EUROPE_COMPETITION = "europe/{competition}"
+    fun europe(competition: String) = "europe/$competition"
+
     const val SIMULATE_TO_DATE = "simulate_to_date"
     const val SIMULATE_PROGRESS = "simulate_progress"
     const val SIMULATE_SUMMARY = "simulate_summary"

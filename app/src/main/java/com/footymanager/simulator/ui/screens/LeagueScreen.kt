@@ -59,6 +59,7 @@ fun CompetitionHubScreen(
     onOpenLeague: () -> Unit,
     onOpenChampionsLeague: () -> Unit,
     onOpenEurope: () -> Unit = onOpenChampionsLeague,
+    onOpenCompetition: (CompetitionType) -> Unit = { onOpenEurope() },
     onOpenFixtures: () -> Unit
 ) {
     var tab by remember { mutableStateOf(HubTab.DOMESTIC) }
@@ -87,7 +88,7 @@ fun CompetitionHubScreen(
                 item { DomesticTab(career = career, onOpenLeague = onOpenLeague, onOpenFixtures = onOpenFixtures) }
             }
             HubTab.EUROPE -> {
-                item { EuropeTab(career = career, onOpenChampionsLeague = onOpenEurope) }
+                item { EuropeTab(career = career, onOpenCompetition = onOpenCompetition) }
             }
             HubTab.CUPS -> {
                 item { CupsTab(career = career, onOpenFixtures = onOpenFixtures) }
@@ -170,10 +171,13 @@ private fun DomesticTab(career: Career, onOpenLeague: () -> Unit, onOpenFixtures
 }
 
 @Composable
-private fun EuropeTab(career: Career, onOpenChampionsLeague: () -> Unit) {
+private fun EuropeTab(career: Career, onOpenCompetition: (CompetitionType) -> Unit) {
     val ucl = career.championsLeague
+    val primary = europeanCompetitions.firstOrNull {
+        career.europeanState(it).participantIds.contains(career.userClubId)
+    } ?: CompetitionType.CHAMPIONS_LEAGUE
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        FmCard(onClick = onOpenChampionsLeague) {
+        FmCard(onClick = { onOpenCompetition(primary) }) {
             SectionHeader("Continental football") {
                 Text(
                     text = if (ucl.active) "In progress" else "Pre-season",
@@ -198,7 +202,7 @@ private fun EuropeTab(career: Career, onOpenChampionsLeague: () -> Unit) {
 
         europeanCompetitions.forEach { competition ->
             val state = career.europeanState(competition)
-            FmCard(onClick = onOpenChampionsLeague) {
+            FmCard(onClick = { onOpenCompetition(competition) }) {
                 SectionHeader(competition.label) {
                     Text(
                         text = if (state.active) "MD ${state.currentMatchday.coerceAtMost(state.leaguePhaseMatchdays)}/${state.leaguePhaseMatchdays}"

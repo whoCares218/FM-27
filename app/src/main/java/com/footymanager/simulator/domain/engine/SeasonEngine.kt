@@ -261,6 +261,8 @@ object SeasonEngine {
                 val isRival = career.userClub.rivalClubId == opponent.id
                 val competitionFactor = when (match.competition) {
                     CompetitionType.CHAMPIONS_LEAGUE -> 1.10
+                    CompetitionType.EUROPA_LEAGUE -> 1.07
+                    CompetitionType.CONFERENCE_LEAGUE -> 1.04
                     CompetitionType.DOMESTIC_CUP -> 1.05
                     else -> 1.0
                 }

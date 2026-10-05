@@ -8,6 +8,7 @@ import kotlin.random.Random
 
 /** A single completed match, as reported to the simulation animation. */
 data class SimulatedFixtureResult(
+    val matchId: Long,
     val date: GameDate,
     val competition: CompetitionType,
     val competitionLabel: String,
@@ -67,6 +68,7 @@ object SimulateToDateEngine {
                 current = next
                 onResult(
                     SimulatedFixtureResult(
+                        matchId = match.id,
                         date = match.date ?: current.date,
                         competition = match.competition,
                         competitionLabel = match.competition.label,

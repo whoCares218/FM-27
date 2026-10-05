@@ -89,6 +89,7 @@ data class MatchFeedItem(
 
 /** One completed match in the simulate-to-date animation feed. */
 data class SimulateDayResult(
+    val matchId: Long,
     val date: GameDate,
     val competitionLabel: String,
     val homeClubId: Long,
@@ -1574,6 +1575,7 @@ class GameViewModel(
                 val updated = withContext(Dispatchers.Default) {
                     SimulateToDateEngine.simulateThrough(career, target, rngFor(career)) { result ->
                         collected += SimulateDayResult(
+                            matchId = result.matchId,
                             date = result.date,
                             competitionLabel = result.competitionLabel,
                             homeClubId = result.homeClubId,

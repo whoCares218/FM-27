@@ -483,10 +483,15 @@ fun SimulateProgressScreen(
     val revealCount = state.currentIndex.coerceAtMost(state.total)
     val visibleResults = state.results.take(revealCount)
 
-    LaunchedEffect(state.currentIndex, state.finished) {
+    LaunchedEffect(state.currentIndex, state.finished, revealDelayMillis) {
         if (!state.finished && state.currentIndex < state.total) {
-            delay(revealDelayMillis)
-            onAdvance()
+            if (revealDelayMillis <= 0L) {
+                // "Animation speed: off" means show the finished list immediately.
+                onContinue()
+            } else {
+                delay(revealDelayMillis)
+                onAdvance()
+            }
         }
     }
 
@@ -546,7 +551,7 @@ fun SimulateProgressScreen(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(visibleResults.asReversed(), key = { it.hashCode() + it.date.toEpochDay() }) { result ->
+            items(visibleResults.asReversed(), key = { it.matchId }) { result ->
                 ResultLine(result)
             }
         }

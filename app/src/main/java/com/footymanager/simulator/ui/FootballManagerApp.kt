@@ -529,6 +529,9 @@ private fun AppNavHost(
                     onOpenLeague = { navController.navigate(Routes.LEAGUE_TABLE) },
                     onOpenChampionsLeague = { navController.navigate(Routes.CHAMPIONS_LEAGUE) },
                     onOpenEurope = { navController.navigate(Routes.EUROPE) },
+                    onOpenCompetition = { competition ->
+                        navController.navigate(Routes.europe(competition.name))
+                    },
                     onOpenFixtures = { navController.navigate(Routes.FIXTURES) }
                 )
             }
@@ -562,6 +565,23 @@ private fun AppNavHost(
                 com.footymanager.simulator.ui.screens.EuropeanCompetitionScreen(
                     career = career,
                     competition = com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE,
+                    onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
+                )
+            }
+        }
+
+        composable(
+            route = Routes.EUROPE_COMPETITION,
+            arguments = listOf(navArgument("competition") { type = NavType.StringType })
+        ) { entry ->
+            val competitionName = entry.arguments?.getString("competition")
+            val competition = com.footymanager.simulator.domain.model.CompetitionType.entries
+                .firstOrNull { it.name == competitionName }
+                ?: com.footymanager.simulator.domain.model.CompetitionType.CHAMPIONS_LEAGUE
+            if (career != null) {
+                com.footymanager.simulator.ui.screens.EuropeanCompetitionScreen(
+                    career = career,
+                    competition = competition,
                     onOpenClub = { id -> navController.navigate(Routes.clubProfile(id)) }
                 )
             }
@@ -760,8 +780,9 @@ private fun AppNavHost(
             } else {
                 SimulateProgressScreen(
                     state = state,
-                    revealDelayMillis = (settings.animationSpeed.multiplier * 1000f)
-                        .toLong().coerceIn(60L, 1000L),
+                    // ~1 second per completed match at normal speed; 0 means the
+                    // manager turned animation off, so the list appears at once.
+                    revealDelayMillis = (settings.animationSpeed.multiplier * 1000f).toLong(),
                     onAdvance = { viewModel.advanceSimulateReveal() },
                     onContinue = { viewModel.finishSimulateReveal() }
                 )
