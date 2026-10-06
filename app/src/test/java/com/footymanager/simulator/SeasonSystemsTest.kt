@@ -11,6 +11,7 @@ import com.footymanager.simulator.domain.model.Difficulty
 import com.footymanager.simulator.domain.model.KnockoutRound
 import com.footymanager.simulator.domain.model.MatchStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -225,5 +226,53 @@ class SeasonSystemsTest {
         val rules = MatchRules()
         assertEquals(5, rules.maxSubstitutions)
         assertEquals(3, rules.maxSubstitutionWindows)
+    }
+
+    @Test
+    fun `the inbox warns once before each transfer window shuts`() {
+        val random = Random(42L)
+        var career = newCareer()
+        val closesAt = career.transferWindow.summerClosesAfterMatchday
+        val headline = "Transfer window closes soon"
+
+        // Advance to the week before the summer window shuts.
+        while (career.matchdayIndex < closesAt - 1) {
+            career = SeasonEngine.advanceWeek(career, random)
+        }
+        val first = career.news.count { it.headline == headline && it.season == career.season }
+        assertEquals("One reminder at the deadline week", 1, first)
+
+        // Advancing through the deadline week must not add a duplicate.
+        career = SeasonEngine.advanceWeek(career, random)
+        val after = career.news.count { it.headline == headline && it.season == career.season }
+        assertEquals("No duplicate reminder", 1, after)
+    }
+
+    @Test
+    fun `a forward clock change with no real time passing cannot refresh the allowance`() {
+        val guard = com.footymanager.simulator.domain.model.RewardClockGuard
+        val dayMs = 86_400_000L
+        val last = com.footymanager.simulator.domain.model.RewardClock(
+            localDay = 20_000L, utcDay = 20_000L,
+            elapsedRealtimeMs = 5_000_000L, wallClockMs = 5_000_000L
+        )
+        // The user jumps the wall clock three days ahead, but the monotonic clock
+        // barely moved: this is a manual clock change, not three real days.
+        val faked = last.copy(
+            localDay = 20_003L, utcDay = 20_003L,
+            elapsedRealtimeMs = 5_000_000L + 1_000L, wallClockMs = 5_000_000L + 3 * dayMs
+        )
+        assertFalse("A faked forward jump must not refresh", guard.canRefresh(last, faked))
+
+        // Real elapsed time does refresh.
+        val real = last.copy(
+            localDay = 20_001L, utcDay = 20_001L,
+            elapsedRealtimeMs = 5_000_000L + dayMs, wallClockMs = 5_000_000L + dayMs
+        )
+        assertTrue("A genuine new day must refresh", guard.canRefresh(last, real))
+
+        // A backward clock change is refused outright.
+        val backward = last.copy(localDay = 19_999L, utcDay = 19_999L)
+        assertFalse(guard.canRefresh(last, backward))
     }
 }

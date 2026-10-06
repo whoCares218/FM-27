@@ -698,7 +698,41 @@ object SeasonEngine {
         // AI clubs trade with each other during open windows.
         updated = TransferEngine.runAiTransferActivity(updated, random)
 
+        // Remind the manager as a transfer window is about to shut.
+        updated = transferWindowReminders(updated)
+
         return updated
+    }
+
+    /**
+     * Writes a reminder to the inbox as a transfer window enters its final week,
+     * once per window. The window is otherwise easy to miss during a long
+     * simulate-to-date run, and a missed deadline is a missed chance to trade.
+     */
+    private fun transferWindowReminders(career: Career): Career {
+        val index = career.matchdayIndex
+        val window = career.transferWindow
+        val windowName = when (index) {
+            window.summerClosesAfterMatchday - 1 -> "summer"
+            window.winterClosesAfterMatchday - 1 -> "winter"
+            else -> return career
+        }
+        val headline = "Transfer window closes soon"
+        // One reminder per window: skip if one for this window is already present.
+        if (career.news.any { it.headline == headline && it.season == career.season && it.body.contains(windowName) }) {
+            return career
+        }
+        val news = career.news + NewsItem(
+            id = career.idCounter + 1,
+            category = NewsCategory.TRANSFER_WINDOW,
+            headline = headline,
+            body = "The $windowName transfer window shuts after the next matchday. " +
+                "Any deals not completed by then must wait until the window reopens.",
+            date = career.date,
+            season = career.season,
+            clubId = career.userClubId
+        )
+        return career.copy(news = news.takeLast(120), idCounter = career.idCounter + 1)
     }
 
     /**

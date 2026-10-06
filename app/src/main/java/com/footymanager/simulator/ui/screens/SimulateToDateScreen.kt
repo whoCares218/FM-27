@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.CompetitionType
+import com.footymanager.simulator.domain.model.isEuropean
 import com.footymanager.simulator.domain.model.GameDate
 import com.footymanager.simulator.domain.model.League
 import com.footymanager.simulator.domain.model.Match
@@ -107,9 +108,9 @@ fun SimulateToDateScreen(
     val earliest = today.plusDays(1)
     val userClubId = career.userClubId
 
-    var visibleMonth by remember { mutableStateOf(earliest.month) }
-    var visibleYear by remember { mutableStateOf(earliest.year) }
-    var selected by remember { mutableStateOf<GameDate?>(null) }
+    var visibleMonth by remember(earliest) { mutableStateOf(earliest.month) }
+    var visibleYear by remember(earliest) { mutableStateOf(earliest.year) }
+    var selected by remember(earliest) { mutableStateOf<GameDate?>(null) }
     var confirming by remember { mutableStateOf(false) }
     var showAllFixtures by remember { mutableStateOf(false) }
 
@@ -423,6 +424,7 @@ private fun CompetitionLegend() {
         LegendDot("League", StatColors.good)
         LegendDot("Europe", StatColors.elite)
         LegendDot("Cup", StatColors.poor)
+        LegendDot("Big match", StatColors.average)
     }
 }
 
@@ -486,6 +488,11 @@ private fun CalendarDay(
         career.club(m.opponentOf(career.userClubId))?.shortName
     }
     val competitionText = userMatch?.let { competitionShortLabel(it) }
+    // A marquee fixture: a derby against the user's rival, or a continental night.
+    val isImportant = userMatch != null && (
+        userMatch.competition.isEuropean ||
+            career.club(userMatch.opponentOf(career.userClubId))?.id == career.userClub.rivalClubId
+        )
     val background = when {
         selected -> MaterialTheme.colorScheme.primary
         hasUserMatch -> markerColor.copy(alpha = 0.16f)
@@ -499,7 +506,7 @@ private fun CalendarDay(
         else -> MaterialTheme.colorScheme.onSurface
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .padding(2.dp)
             .height(52.dp)
@@ -515,45 +522,60 @@ private fun CalendarDay(
                 }
             )
             .clickable(enabled = selectable, onClick = onClick)
-            .padding(horizontal = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(horizontal = 2.dp)
     ) {
-        Text(
-            text = "${date.day}",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (isToday || selected || hasUserMatch) FontWeight.Bold else FontWeight.Normal,
-            color = textColor
-        )
-        if (hasUserMatch && opponentName != null) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
             Text(
-                text = opponentName,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (selected) MaterialTheme.colorScheme.onPrimary else markerColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center
+                text = "${date.day}",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = if (isToday || selected || hasUserMatch) FontWeight.Bold else FontWeight.Normal,
+                color = textColor
             )
-            if (competitionText != null) {
+            if (hasUserMatch && opponentName != null) {
                 Text(
-                    text = competitionText,
+                    text = opponentName,
                     style = MaterialTheme.typography.labelSmall,
-                    fontSize = 8.sp,
-                    lineHeight = 9.sp,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else markerColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center
                 )
+                if (competitionText != null) {
+                    Text(
+                        text = competitionText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 8.sp,
+                        lineHeight = 9.sp,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else if (matchCount > 0 && selectable) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                )
             }
-        } else if (matchCount > 0 && selectable) {
+        }
+        // A small dot flags a marquee fixture without adding clutter to the cell.
+        if (isImportant && !selected) {
             Box(
                 modifier = Modifier
-                    .padding(top = 2.dp)
-                    .size(4.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(top = 3.dp, end = 4.dp)
+                    .size(5.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    .background(StatColors.average)
             )
         }
     }
