@@ -211,3 +211,31 @@ leagues the same size, or give each league its own matchday count.
 - `MatchEngine.secondHalfRate` raises a chasing side's second-half rate and lowers a
   comfortable leader's; game-state risk is modelled there, not by hard-clamping scores.
 
+## Simulate-to-date, league hub & club museum (added 2026-10-05, v1.10.0)
+
+- `SimulateToDateEngine` advances the world one matchday at a time through the same
+  `SeasonEngine` pipeline as a normal week, so tables, stats, injuries, suspensions,
+  finances and development all move exactly as if each week had been played by hand.
+  `simulateOneWeek` returns the week's results plus the new career; the ViewModel persists
+  that career after every week as a checkpoint, so an interrupted run resumes consistently
+  (no duplicate fixtures, no half-applied results).
+- The reveal feed shows only `isUserMatch` results; the progress bar counts every fixture
+  simulated in the background (`countMatches`), not just the user's. Keep the two separate.
+- The season-calendar bug that made simulate-to-date dead after season 1 lived in the
+  rollover: the new season's fixtures/horizon must be regenerated at `SeasonEngine`
+  turnover. `SimulateToDateTest` covers season 1/2/3 so this cannot regress.
+- `CompetitionStatus` derives the live domestic position and European state (league-phase
+  position, knockout round, elimination, winner) straight from the tables and ties. Never
+  hard-code a competition name or a position in the progress/summary UI; use these helpers.
+- League hub: DOMESTIC opens on the full table with country/league selectors; EUROPE has a
+  competition dropdown (Champions/Europa/Conference); OTHER LEAGUES shows compact top-5
+  mini-tables with a "view full table" route. `LeagueHubTest` and `ScreenRenderTest` cover it.
+- Club history (`ClubHistoryScreen`, reachable from the club crest on HOME) is the career
+  museum: season history, manager record card, trophy cabinet, all-time goals/assists/
+  ratings/appearances, total wages paid, injury days, single-season records, notable
+  matches and all-time finance/record transfers. `ClubHistoryEngine` accumulates records at
+  season turnover; the data lives in `Career.clubHistory` and survives save/load.
+- Music: `MusicTrack` has five moods; `MusicEngine` synthesises them (no assets) and
+  `SettingsScreen` exposes track, play mode (selected/shuffle), preview, volume and on/off,
+  all persisted. Do not restart playback on navigation; drive it from the app lifecycle.
+
