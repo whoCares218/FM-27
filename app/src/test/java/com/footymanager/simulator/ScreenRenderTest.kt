@@ -823,6 +823,9 @@ class ScreenRenderTest {
         composeRule.onNodeWithText("Club History").assertExists()
         composeRule.onNodeWithText("SEASON HISTORY").assertExists()
         composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("MANAGER"))
+        composeRule.onNodeWithText("MANAGER").assertExists()
+        composeRule.onAllNodes(hasScrollAction())[0]
             .performScrollToNode(hasText("TROPHY CABINET"))
         composeRule.onNodeWithText("TROPHY CABINET").assertExists()
         // The player boards live behind the Players tab.
@@ -846,6 +849,9 @@ class ScreenRenderTest {
         composeRule.onAllNodes(hasScrollAction())[0]
             .performScrollToNode(hasText("SINGLE-SEASON RECORDS"))
         composeRule.onNodeWithText("SINGLE-SEASON RECORDS").assertExists()
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("NOTABLE MATCHES"))
+        composeRule.onNodeWithText("NOTABLE MATCHES").assertExists()
         composeRule.onAllNodes(hasScrollAction())[0]
             .performScrollToNode(hasText("TOTAL WAGES PAID", substring = true))
         composeRule.onNodeWithText("TOTAL WAGES PAID", substring = true).assertExists()

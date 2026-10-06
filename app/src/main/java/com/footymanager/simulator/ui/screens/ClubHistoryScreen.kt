@@ -151,6 +151,7 @@ fun ClubHistoryScreen(
         when (tab) {
             HistoryTab.SEASONS -> {
                 item { SeasonHistoryCard(career = career) }
+                item { ManagerCard(career = career) }
                 item { TrophyCabinetCard(career = career) }
             }
             HistoryTab.PLAYERS -> {
@@ -260,6 +261,61 @@ private fun SeasonRow(season: ClubSeasonRecord, live: Boolean) {
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "🏆 " + season.trophies.joinToString(" • "),
+                style = MaterialTheme.typography.labelSmall,
+                color = StatColors.elite,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManagerCard(career: Career) {
+    val record = career.managerRecord
+    val seasonsManaged = career.clubHistory.seasons.size + 1
+    FmCard {
+        SectionHeader("Manager")
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = career.managerName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Current manager • Season ${career.season}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Text(
+                text = "${record.winRatePercent}%",
+                style = MaterialTheme.typography.titleMedium,
+                color = StatColors.forRating(record.winRatePercent),
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            StatCell("Seasons", "$seasonsManaged")
+            StatCell("Matches", "${record.matchesManaged}")
+            StatCell("Wins", "${record.wins}", valueColor = StatColors.good)
+            StatCell("Draws", "${record.draws}")
+            StatCell("Losses", "${record.losses}", valueColor = StatColors.bad)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Win rate ${record.winRatePercent}% • ${"%.2f".format(record.pointsPerGame)} points per game • " +
+                "${record.trophies.size} troph${if (record.trophies.size == 1) "y" else "ies"}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (record.trophies.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "🏆 " + record.trophies.joinToString(" • "),
                 style = MaterialTheme.typography.labelSmall,
                 color = StatColors.elite,
                 fontWeight = FontWeight.Bold
