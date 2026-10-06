@@ -260,3 +260,6 @@ leagues the same size, or give each league its own matchday count.
   `ScoutingEngineTest` guards it.
 
 
+- Rewarded-ad anti-tamper (`RewardClock`/`RewardClockGuard`/`DeviceClock`): the daily allowance resets on the user's *local* day, and a refresh needs evidence real time passed — the monotonic clock within a boot session, the wall clock (bounded jump) only across a reboot. Do not revert to a plain UTC-day check; that both reset at the wrong moment and was trivially gamed by moving the clock. `DeviceClock` computes the local day from the epoch clock and the zone offset directly: the app is minSdk 24 and core library desugaring is not enabled, so `java.time` is a lint `NewApi` error.
+- Transfer-window reminders: `SeasonEngine.transferWindowReminders` writes one inbox item in the week before each window shuts, keyed on season + window so it never duplicates.
+- Simulate-to-date calendar (`SimulateToDateScreen`): day cells show the user's opponent and competition read from the fixture, flag marquee fixtures (Europe/derby) with a subtle dot, and re-anchor the visible month when the earliest selectable date changes at season rollover.
