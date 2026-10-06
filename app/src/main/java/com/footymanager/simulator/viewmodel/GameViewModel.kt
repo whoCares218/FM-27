@@ -5,12 +5,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.footymanager.simulator.domain.data.AnimationSpeed
 import com.footymanager.simulator.domain.data.CareerFactory
+import com.footymanager.simulator.domain.data.DeviceClock
 import com.footymanager.simulator.domain.data.GameSettings
 import com.footymanager.simulator.domain.data.CareerStore
 import com.footymanager.simulator.domain.data.SelectionHelper
 import com.footymanager.simulator.domain.data.SaveRepository
 import com.footymanager.simulator.domain.data.SettingsRepository
 import com.footymanager.simulator.domain.data.SettingsStore
+import com.footymanager.simulator.domain.model.RewardClock
 import com.footymanager.simulator.domain.engine.ChampionsLeagueEngine
 import com.footymanager.simulator.domain.engine.CompetitionStatus
 import com.footymanager.simulator.domain.engine.DomesticStatus
@@ -19,6 +21,8 @@ import com.footymanager.simulator.domain.engine.CupEngine
 import com.footymanager.simulator.domain.engine.AiManager
 import com.footymanager.simulator.domain.engine.FinanceEngine
 import com.footymanager.simulator.domain.engine.NegotiationEngine
+import com.footymanager.simulator.domain.engine.ScoutingEngine
+import com.footymanager.simulator.domain.engine.ScoutingReport
 import com.footymanager.simulator.domain.engine.MatchPhase
 import com.footymanager.simulator.domain.engine.MatchRules
 import com.footymanager.simulator.domain.engine.MatchTeamInput
@@ -62,6 +66,9 @@ import com.footymanager.simulator.domain.model.TrainingFocus
 import com.footymanager.simulator.domain.model.TransferListing
 import com.footymanager.simulator.domain.model.TransferHistoryEntry
 import com.footymanager.simulator.domain.model.TransferOffer
+import com.footymanager.simulator.ui.sound.MusicEngine
+import com.footymanager.simulator.ui.sound.MusicPlayMode
+import com.footymanager.simulator.ui.sound.MusicTrack
 import com.footymanager.simulator.ui.sound.SoundCue
 import com.footymanager.simulator.ui.sound.SoundManager
 import kotlinx.coroutines.CoroutineScope
@@ -242,6 +249,8 @@ data class MatchDayState(
     val maxSubstitutionWindows: Int = 3,
     /** Forward gate estimate for a home fixture, shown before kick-off. */
     val attendanceEstimate: AttendanceEstimate? = null,
+    /** Opposition dossier for the pre-match screen, derived from live career data. */
+    val scoutingReport: ScoutingReport? = null,
     /** The user's league position before this fixture, for the movement animation. */
     val positionBefore: Int = 0,
     /** The user's league position after this fixture, for the movement animation. */
@@ -358,6 +367,9 @@ class GameViewModel(
     /** Lightweight synthesised sound effects, gated by the player's setting. */
     val sound = SoundManager()
 
+    /** Original, procedurally generated background music. */
+    val music = MusicEngine()
+
     /** Reward state of the current career, for the rewarded-ad card. */
     val adRewards: StateFlow<com.footymanager.simulator.domain.model.AdRewardState?>
         get() = _adRewards.asStateFlow()
@@ -403,6 +415,8 @@ class GameViewModel(
                 _settings.value = it
                 sound.enabled = it.soundEnabled
                 sound.volume = it.soundVolume
+                music.enabled = it.musicEnabled
+                music.volume = it.musicVolume
             }
         }
         viewModelScope.launch {
@@ -444,6 +458,10 @@ class GameViewModel(
             _matchDay.value = null
             _isBusy.value = false
             if (loaded == null) _message.value = "No saved career was found."
+            // Migrate/refresh the rewarded-ad allowance to the current local day so
+            // a save written against the old UTC scheme (or a previous day) is
+            // corrected on load rather than carrying a stale count.
+            if (loaded != null) refreshAdAllowance()
         }
     }
 
@@ -491,6 +509,39 @@ class GameViewModel(
     fun setAnimationSpeed(speed: AnimationSpeed) = viewModelScope.launch { settingsRepository.setAnimationSpeed(speed) }
 
     fun setSoundVolume(volume: Float) = viewModelScope.launch { settingsRepository.setSoundVolume(volume) }
+
+    fun setMusic(enabled: Boolean) = viewModelScope.launch { settingsRepository.setMusic(enabled) }
+
+    fun setMusicTrack(track: MusicTrack) {
+        music.track = track
+        viewModelScope.launch { settingsRepository.setMusicTrack(track) }
+    }
+
+    fun setMusicPlayMode(mode: MusicPlayMode) {
+        music.playMode = mode
+        viewModelScope.launch { settingsRepository.setMusicPlayMode(mode) }
+    }
+
+    /** Plays the currently selected track as a short preview in Settings. */
+    fun previewMusic() {
+        music.track = _settings.value.musicTrack
+        music.preview()
+    }
+
+    /** Stops a Settings preview. */
+    fun stopMusicPreview() = music.stopPreview()
+
+    fun setMusicVolume(volume: Float) = viewModelScope.launch { settingsRepository.setMusicVolume(volume) }
+
+    /** Starts the background music if the player has it enabled. */
+    fun startMusic() {
+        music.track = _settings.value.musicTrack
+        music.playMode = _settings.value.musicPlayMode
+        if (_settings.value.musicEnabled) music.start()
+    }
+
+    /** Stops the background music cleanly. */
+    fun stopMusic() = music.stop()
 
     /** Plays a UI cue through the shared sound manager. */
     fun playSound(cue: SoundCue) {
@@ -771,6 +822,7 @@ class GameViewModel(
                     isRival = career.userClub.rivalClubId == opponent.id
                 )
             } else null,
+            scoutingReport = ScoutingEngine.report(career, opponentId, match.competition),
             positionBefore = career.userLeaguePosition
         )
         return true
@@ -1988,10 +2040,16 @@ class GameViewModel(
     }
 
     private fun soundForLatestOffer() {
-        when (_career.value?.pendingOffers?.lastOrNull()?.status) {
+        val latest = _career.value?.pendingOffers?.lastOrNull() ?: return
+        when (latest.status) {
             OfferStatus.COMPLETED -> playSound(SoundCue.TRANSFER)
             OfferStatus.ACCEPTED -> playSound(SoundCue.SUCCESS)
-            OfferStatus.REJECTED, OfferStatus.COLLAPSED -> playSound(SoundCue.FAILURE)
+            OfferStatus.REJECTED, OfferStatus.COLLAPSED -> {
+                playSound(SoundCue.FAILURE)
+                // Surface the reason (e.g. "insufficient funds") instead of letting
+                // the offer disappear silently.
+                latest.message?.takeIf { it.isNotBlank() }?.let { _message.value = it }
+            }
             else -> Unit
         }
     }
@@ -2274,12 +2332,21 @@ class GameViewModel(
 
     /**
      * Grants the reward for a successfully completed rewarded ad. The allowance
-     * resets once per calendar day and no reward is given once it is exhausted.
+     * resets once per *local* calendar day, and a device-clock change cannot be
+     * used to claim more than once per day (see [RewardClockGuard]). The payout
+     * scales with the club's reputation.
+     *
+     * [now] is injectable so the guard can be tested with a fake clock.
      */
-    fun claimAdReward(epochDay: Long = System.currentTimeMillis() / 86_400_000L): Long {
+    fun claimAdReward(now: RewardClock = DeviceClock.now()): Long {
         val career = _career.value ?: return 0L
-        val (updated, reward) = career.adRewards.recordAd(epochDay)
-        if (reward <= 0L) return 0L
+        val (updated, reward) = career.adRewards.recordAd(now, career.userClub.reputation)
+        if (reward <= 0L) {
+            // Even a refused claim should persist the refreshed clock baseline so a
+            // legacy save is migrated and the guard has a reference point.
+            if (updated != career.adRewards) updateCareer { c -> c.copy(adRewards = updated) }
+            return 0L
+        }
         updateCareer { c ->
             var idc = c.idCounter
             idc++
@@ -2302,11 +2369,15 @@ class GameViewModel(
         return reward
     }
 
-    /** Refreshes the ad allowance for a new day without granting anything. */
-    fun refreshAdAllowance(epochDay: Long = System.currentTimeMillis() / 86_400_000L) {
+    /**
+     * Refreshes the ad allowance for a new local day without granting anything.
+     * Called on load so the UI shows the correct "left today" count immediately.
+     */
+    fun refreshAdAllowance(now: RewardClock = DeviceClock.now()) {
         val career = _career.value ?: return
-        if (career.adRewards.allowanceDay == epochDay) return
-        updateCareer { c -> c.copy(adRewards = c.adRewards.withDay(epochDay)) }
+        val updated = career.adRewards.withClock(now)
+        if (updated == career.adRewards) return
+        updateCareer { c -> c.copy(adRewards = updated) }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -2367,6 +2438,7 @@ class GameViewModel(
         }
         persistenceScope.cancel()
         sound.release()
+        music.release()
         super.onCleared()
     }
 }

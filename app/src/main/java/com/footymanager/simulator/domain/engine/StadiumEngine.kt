@@ -51,9 +51,17 @@ object StadiumEngine {
         val rivalryFactor = if (isRival) 1.08 else 1.0
         val noise = 1.0 + random.nextDouble(-0.05, 0.05)
 
-        val fill = (reputationFactor * opponentFactor * formFactor * priceFactor *
-            fanFactor * rivalryFactor * competitionFactor * noise)
+        // The non-price factors set the *base* turnout, clamped so a routine game
+        // is never empty and a big one never overflows. The price factor is then
+        // applied multiplicatively on top and is NOT re-clamped: capping the
+        // combined fill made attendance flat once price rose past the band, so
+        // gate receipts kept climbing with price and the maximum ticket price
+        // became the profit-maximising choice. Letting demand keep falling gives
+        // a proper interior optimum near the middle of the band.
+        val baseFill = (reputationFactor * opponentFactor * formFactor * fanFactor *
+            rivalryFactor * competitionFactor * noise)
             .coerceIn(0.28, 1.0)
+        val fill = baseFill * priceFactor
 
         return (stadium.capacity * fill).roundToInt().coerceIn(0, stadium.capacity)
     }

@@ -8,12 +8,19 @@ plugins {
 }
 
 // Release signing is configured from keystore.properties (never committed).
-// When absent the release build falls back to the debug keystore so that
-// `assembleRelease` still produces an installable artifact for testing.
+//
+// A release build must be signed with a real release key. Silently falling back
+// to the debug keystore produces an artifact that cannot be published and hides
+// the misconfiguration, so the fallback only happens when it is explicitly
+// requested with -PallowDebugSignedRelease=true (used for local smoke builds).
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) load(keystorePropsFile.inputStream())
 }
+val hasReleaseKeystore = keystorePropsFile.exists() &&
+    keystoreProps.getProperty("storeFile") != null
+val allowDebugSignedRelease =
+    (project.findProperty("allowDebugSignedRelease") as String?)?.toBoolean() == true
 
 android {
     namespace = "com.footymanager.simulator"
@@ -23,8 +30,8 @@ android {
         applicationId = "com.footymanager.simulator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.11.0"
+        versionCode = 13
+        versionName = "1.12.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -32,7 +39,7 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropsFile.exists()) {
+        if (hasReleaseKeystore) {
             create("release") {
                 storeFile = file(keystoreProps.getProperty("storeFile"))
                 storePassword = keystoreProps.getProperty("storePassword")
@@ -54,10 +61,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = if (keystorePropsFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            signingConfig = when {
+                hasReleaseKeystore -> signingConfigs.getByName("release")
+                allowDebugSignedRelease -> signingConfigs.getByName("debug")
+                else -> null
             }
         }
     }

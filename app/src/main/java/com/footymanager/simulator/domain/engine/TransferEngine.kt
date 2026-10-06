@@ -335,8 +335,23 @@ object TransferEngine {
 
     /** Moves the player, moves the money and writes the news. */
     private fun completeTransfer(career: Career, offer: TransferOffer, player: Player): Career {
-        var idCounter = career.idCounter
         val buyingClub = career.clubOrThrow(offer.toClubId)
+        val isUserBuy = buyingClub.id == career.userClubId
+        // Root invariant: a club can never spend cash it does not have. If the fee
+        // exceeds the budget/balance, the deal collapses honestly instead of
+        // silently driving the balance negative.
+        if (isUserBuy && !FinanceEngine.canAfford(buyingClub, offer.fee)) {
+            return career.copy(
+                pendingOffers = career.pendingOffers.map {
+                    if (it.id == offer.id) it.copy(
+                        status = OfferStatus.COLLAPSED,
+                        sellingClubResponse = SellingClubResponse.REJECT,
+                        message = "Transfer collapsed: insufficient funds"
+                    ) else it
+                }
+            )
+        }
+        var idCounter = career.idCounter
         val sellingClubId = player.clubId
         val makeweight = offer.offerPackage.playerOfferedId?.let { career.player(it) }
 
@@ -374,7 +389,6 @@ object TransferEngine {
         }
 
         val ledger = mutableListOf<FinanceLedgerEntry>()
-        val isUserBuy = buyingClub.id == career.userClubId
         val isUserSell = sellingClubId == career.userClubId
         // Only the user's own perspective is written to the ledger, so a single
         // purchase never shows up as both spending and income on their books.

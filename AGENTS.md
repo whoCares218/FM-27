@@ -234,7 +234,29 @@ leagues the same size, or give each league its own matchday count.
   ratings/appearances, total wages paid, injury days, single-season records, notable
   matches and all-time finance/record transfers. `ClubHistoryEngine` accumulates records at
   season turnover; the data lives in `Career.clubHistory` and survives save/load.
-- Music: removed. There is no background-music engine, track selection or play mode.
-  Keep sound effects (`SoundManager`) only; do not reintroduce a navigation-driven
-  playback lifecycle.
+- Music: five original, on-device-synthesised moods (`MusicTrack`: Calm Manager,
+  Matchday Energy, Modern Sports, European Night, Victory Motivation) rendered by
+  `MusicEngine` — no audio assets, nothing to licence. Settings exposes ON/OFF, a
+  track radio list, a preview button, a volume slider and a SELECTED/SHUFFLE play
+  mode; all persist through DataStore. `FootballManagerApp` drives start/stop from
+  the lifecycle (ON_START/ON_STOP) and re-asserts the setting on start so "music
+  off" stays off; never restart the engine on navigation. `MusicTest` covers the
+  catalogue, the distinct waveforms and the settings round trip. Keep sound effects
+  (`SoundManager`) alongside it.
+- Ticket pricing (`StadiumEngine.attendance`): the non-price factors set a *base*
+  fill clamped to 0.28..1.0, then the price factor is applied on top and NOT
+  re-clamped. Capping the combined fill made attendance flat above the band, so gate
+  receipts grew with price and the maximum price was always optimal. Keep the
+  interior optimum — `FinanceAndMarketTest` asserts the best price is strictly inside
+  5..150.
+- Transfer affordability: the board's transfer *budget* is the spending rule
+  (`FinanceEngine.canAfford`), matching what the Transfers UI shows. `availableTransferCash`
+  is only the finance screen's honest cash view (budget capped by balance); do not use it
+  to gate signings or fully-funded bids break. `TransferEngine` rejects a fee over budget.
+- Pre-match scouting (`ScoutingEngine`, rendered by `ScoutingCard` in `MatchDayScreen`):
+  the dossier is derived live from the career (position, season goals, form, key player,
+  availability, last meeting) and carried on `MatchDayState.scoutingReport`, so it can
+  never go stale. Competition comes from the fixture, never a hard-coded label.
+  `ScoutingEngineTest` guards it.
+
 

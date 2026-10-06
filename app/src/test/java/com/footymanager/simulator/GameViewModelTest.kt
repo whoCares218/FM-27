@@ -444,17 +444,32 @@ class GameViewModelTest {
     @Test
     fun `audio settings persist across a restart`() {
         val vm = newViewModel()
+        vm.setMusic(false)
         vm.setSound(false)
+        vm.setMusicVolume(0.25f)
         vm.setSoundVolume(1.0f)
 
         val restarted = newViewModel()
         awaitIdle {
             val s = restarted.settings.value
-            !s.soundEnabled && s.soundVolume == 1.0f
+            !s.musicEnabled && !s.soundEnabled &&
+                s.musicVolume == 0.25f && s.soundVolume == 1.0f
         }
         val settings = restarted.settings.value
+        assertFalse("Music setting should persist", settings.musicEnabled)
         assertFalse("Sound setting should persist", settings.soundEnabled)
+        assertEquals(0.25f, settings.musicVolume, 0.001f)
         assertEquals(1.0f, settings.soundVolume, 0.001f)
+    }
+
+    @Test
+    fun `turning music off stops the engine cleanly`() {
+        val vm = newViewModel()
+        vm.startMusic()
+        vm.setMusic(false)
+        awaitIdle { !vm.settings.value.musicEnabled }
+        // The engine follows the setting: disabled and not running.
+        assertFalse("Music engine should be disabled", vm.music.enabled)
     }
 
     @Test

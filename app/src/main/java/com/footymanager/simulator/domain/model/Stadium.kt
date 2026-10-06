@@ -141,38 +141,79 @@ data class Sponsorship(
 }
 
 /**
- * Optional rewarded-ad allowance. Three ads a day, resetting on the calendar
- * day, and never required to play.
+ * Optional rewarded-ad allowance. Three ads a day, resetting on the *local*
+ * calendar day, and never required to play.
+ *
+ * The per-ad reward is derived from the club's reputation rather than being a
+ * flat figure, so a bonus is economically meaningful at every level without
+ * wrecking the economy: it lands at roughly one matchday's gate for that club
+ * and is capped. See [rewardFor].
  */
 @Serializable
 data class AdRewardState(
-    /** Epoch day the allowance was last refreshed. */
+    /**
+     * Local calendar day (epoch day in the device time zone) the allowance was
+     * last refreshed. Written by the current build.
+     */
     val allowanceDay: Long = 0,
     val adsWatchedToday: Int = 0,
     val totalAdsWatched: Int = 0,
-    val totalRewardsEarned: Long = 0
+    val totalRewardsEarned: Long = 0,
+    /**
+     * The last clock observation, used to reject a device-clock change that
+     * tries to claim the allowance more than once a day.
+     */
+    val clock: RewardClock? = null,
+    /**
+     * How [allowanceDay] is numbered. [RewardClockGuard.SCHEME_LOCAL] for the
+     * current local-day scheme; [RewardClockGuard.SCHEME_LEGACY] marks a save
+     * written against the old UTC scheme (or a freshly constructed state), which
+     * must not be compared against a local day directly.
+     */
+    val dayScheme: Int = RewardClockGuard.SCHEME_LEGACY
 ) {
     val maxPerDay: Int get() = MAX_PER_DAY
 
     val remainingToday: Int get() = (MAX_PER_DAY - adsWatchedToday).coerceAtLeast(0)
 
-    /** Reward for the next ad, or 0 when the allowance is exhausted. */
-    val nextReward: Long
-        get() = if (remainingToday <= 0) 0L else REWARDS[adsWatchedToday]
+    /**
+     * Total reward for the next ad at the given club [reputation], or 0 when the
+     * allowance is exhausted. [reputation] defaults to a mid-table club so the
+     * UI has a sensible figure even before a career is loaded.
+     */
+    fun nextReward(reputation: Int = 60): Long =
+        if (remainingToday <= 0) 0L else rewardFor(reputation)
 
-    /** Total still claimable today. */
-    val remainingRewardToday: Long
-        get() = (adsWatchedToday until MAX_PER_DAY).sumOf { REWARDS[it] }
+    /** Total still claimable today at the given club reputation. */
+    fun remainingRewardToday(reputation: Int = 60): Long =
+        rewardFor(reputation) * remainingToday
 
-    fun withDay(epochDay: Long): AdRewardState =
-        if (epochDay == allowanceDay) this
-        else copy(allowanceDay = epochDay, adsWatchedToday = 0)
+    /**
+     * True when [now] justifies refreshing the allowance. A legacy save (scheme 0)
+     * is always migrated onto the current local-day scheme the first time it is
+     * seen, so it refreshes once to establish a clean baseline.
+     */
+    fun canRefresh(now: RewardClock): Boolean =
+        dayScheme != RewardClockGuard.SCHEME_LOCAL || RewardClockGuard.canRefresh(clock, now)
 
-    /** Records a completed ad and returns the reward granted. */
-    fun recordAd(epochDay: Long): Pair<AdRewardState, Long> {
-        val fresh = withDay(epochDay)
+    /**
+     * Refreshes the allowance onto [now]'s local day when the guard allows it,
+     * otherwise returns this state unchanged.
+     */
+    fun withClock(now: RewardClock): AdRewardState =
+        if (!canRefresh(now)) this
+        else copy(
+            allowanceDay = now.localDay,
+            adsWatchedToday = 0,
+            dayScheme = RewardClockGuard.SCHEME_LOCAL,
+            clock = now
+        )
+
+    /** Records a completed ad at the given reputation and returns the reward. */
+    fun recordAd(now: RewardClock, reputation: Int): Pair<AdRewardState, Long> {
+        val fresh = withClock(now)
         if (fresh.remainingToday <= 0) return fresh to 0L
-        val reward = REWARDS[fresh.adsWatchedToday]
+        val reward = rewardFor(reputation)
         return fresh.copy(
             adsWatchedToday = fresh.adsWatchedToday + 1,
             totalAdsWatched = fresh.totalAdsWatched + 1,
@@ -182,8 +223,24 @@ data class AdRewardState(
 
     companion object {
         const val MAX_PER_DAY = 3
-        /** 3M, 3M, 4M - a maximum of 10M per day. */
-        val REWARDS = listOf(3_000_000L, 3_000_000L, 4_000_000L)
-        val MAX_DAILY_TOTAL: Long = REWARDS.sum()
+
+        /**
+         * A single ad's payout for a club of this reputation. It scales with the
+         * club's annual-revenue curve so a small club gets a useful boost while a
+         * giant gets a proportionate one, and it is capped so it can never exceed
+         * roughly a week of a top club's commercial income.
+         */
+        fun rewardFor(reputation: Int): Long {
+            val annual = FinanceModel.annualRevenue(reputation)
+            // ~0.09% of annual revenue, i.e. a shade under half a week of income.
+            val scaled = (annual * 0.0009).toLong()
+            return scaled.coerceIn(MIN_REWARD, MAX_REWARD)
+        }
+
+        const val MIN_REWARD = 150_000L
+        const val MAX_REWARD = 6_000_000L
+
+        /** Maximum a club can earn from ads in one day, at this reputation. */
+        fun maxDailyTotal(reputation: Int = 60): Long = rewardFor(reputation) * MAX_PER_DAY
     }
 }

@@ -28,6 +28,13 @@ class SaveRepository(private val dataStore: DataStore<Preferences>) : CareerStor
     private val activeSaveKey = stringPreferencesKey("active_career")
 
     /**
+     * Where a save that failed to decode is stashed. Keeping the raw payload means
+     * a save written by a future build (or a partially migrated one) can be
+     * recovered by hand instead of being silently destroyed by the next write.
+     */
+    private val backupSaveKey = stringPreferencesKey("unreadable_career_backup")
+
+    /**
      * Persists the career, stamping the save time so the UI can show when the
      * game was last written.
      */
@@ -44,7 +51,19 @@ class SaveRepository(private val dataStore: DataStore<Preferences>) : CareerStor
     override suspend fun load(): Career? = try {
         val prefs = dataStore.data.first()
         val payload = prefs[activeSaveKey]
-        if (payload == null) null else SaveCodec.decode(payload)
+        if (payload == null) {
+            null
+        } else {
+            val decoded = SaveCodec.decode(payload)
+            if (decoded == null) {
+                // Do not lose the data: keep the raw payload aside before the game
+                // treats this as "no save" and the manager starts a new career.
+                runCatching { dataStore.edit { it[backupSaveKey] = payload } }
+                null
+            } else {
+                decoded
+            }
+        }
     } catch (t: Throwable) {
         // A save written by an incompatible version is discarded rather than
         // crashing the app on launch.

@@ -243,9 +243,24 @@ object FinanceEngine {
         )
     }
 
-    /** True when the club can afford a fee without going deeply into the red. */
+    /**
+     * Cash the club can actually commit to a transfer right now, for the finance
+     * screen's "available cash" line: the board's transfer budget, but never more
+     * than the club's own balance. This is the honest cash view, not the spending
+     * rule — see [canAfford].
+     */
+    fun availableTransferCash(club: Club): Long =
+        minOf(club.transferBudget, club.balance).coerceAtLeast(0L)
+
+    /**
+     * The board's spending rule: a transfer is affordable while it fits inside the
+     * transfer budget the board set for the season. The budget — not the raw cash
+     * balance — is the authority, exactly as the transfer UI presents it, so a
+     * fully-funded bid is never rejected at the last moment and a club cannot sign
+     * a player it was never allowed to buy.
+     */
     fun canAfford(club: Club, fee: Long): Boolean =
-        club.transferBudget >= fee && club.balance + club.transferBudget >= fee
+        fee <= club.transferBudget
 
     /** True when the wage fits inside the remaining wage budget. */
     fun canAffordWage(career: Career, club: Club, weeklyWage: Long): Boolean {
@@ -398,7 +413,7 @@ object FinanceEngine {
             totalIncome = totalIncome,
             totalExpense = totalExpense,
             projectedSeasonCost = projectedCost,
-            availableCash = minOf(club.transferBudget, club.balance).coerceAtLeast(0L)
+            availableCash = availableTransferCash(club)
         )
     }
 

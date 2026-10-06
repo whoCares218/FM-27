@@ -185,27 +185,39 @@ class SeasonSystemsTest {
     @Test
     fun `rewarded ad allowance pays out three times a day and resets`() {
         var state = com.footymanager.simulator.domain.model.AdRewardState()
-        val day = 20_000L
+        val reputation = 60
+        val reward = com.footymanager.simulator.domain.model.AdRewardState.rewardFor(reputation)
+
+        // Two clock samples one full day apart, with the monotonic clock intact.
+        val dayMs = 86_400_000L
+        val base = com.footymanager.simulator.domain.model.RewardClock(
+            localDay = 20_000L, utcDay = 20_000L,
+            elapsedRealtimeMs = 1_000_000L, wallClockMs = 1_000_000L
+        )
+        val nextDay = base.copy(
+            localDay = 20_001L, utcDay = 20_001L,
+            elapsedRealtimeMs = 1_000_000L + dayMs, wallClockMs = 1_000_000L + dayMs
+        )
 
         val rewards = (1..3).map { _ ->
-            val (next, reward) = state.recordAd(day)
+            val (next, paid) = state.recordAd(base, reputation)
             state = next
-            reward
+            paid
         }
-        assertEquals(listOf(3_000_000L, 3_000_000L, 4_000_000L), rewards)
+        assertEquals(listOf(reward, reward, reward), rewards)
         assertEquals(3, state.adsWatchedToday)
         assertEquals(0, state.remainingToday)
 
         // A fourth attempt on the same day yields nothing.
-        val (sameDay, extra) = state.recordAd(day)
+        val (sameDay, extra) = state.recordAd(base, reputation)
         assertEquals(0L, extra)
         assertEquals(3, sameDay.adsWatchedToday)
 
         // The next calendar day restores the full allowance.
-        val (nextDay, firstReward) = state.recordAd(day + 1)
-        assertEquals(1, nextDay.adsWatchedToday)
-        assertEquals(3_000_000L, firstReward)
-        assertEquals(7_000_000L, nextDay.remainingRewardToday)
+        val (tomorrow, firstReward) = state.recordAd(nextDay, reputation)
+        assertEquals(1, tomorrow.adsWatchedToday)
+        assertEquals(reward, firstReward)
+        assertEquals(reward * 2, tomorrow.remainingRewardToday(reputation))
     }
 
     @Test

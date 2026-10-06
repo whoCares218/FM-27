@@ -513,6 +513,28 @@ class FinanceAndMarketTest {
         assertTrue(estimate.expectedAttendance <= career.stadium.capacity)
     }
 
+    @Test
+    fun `the profit-maximising ticket price is interior, not the maximum`() {
+        // Regression: a clamped fill made attendance flat above the band, so gate
+        // revenue grew with every price rise and the maximum price won. The
+        // optimum must sit strictly inside the selectable range (5..150).
+        val career = newCareer()
+        val stadium = career.stadium
+        fun revenue(price: Int): Long = StadiumEngine.estimate(
+            stadium.copy(ticketPrice = price), career.userClub.reputation,
+            career.userClub.reputation, 1.5, career.fanSatisfaction
+        ).estimatedTicketRevenue
+
+        val prices = (5..150 step 5).toList()
+        val best = prices.maxByOrNull { revenue(it) }!!
+        assertTrue(
+            "The best price ($best) must not be the maximum (150)",
+            best < 150
+        )
+        assertTrue("The best price ($best) must not be the minimum (5)", best > 5)
+        assertTrue("A mid price must beat the maximum", revenue(best) > revenue(150))
+    }
+
     // ------------------------------------------------- matchday finance
 
     @Test

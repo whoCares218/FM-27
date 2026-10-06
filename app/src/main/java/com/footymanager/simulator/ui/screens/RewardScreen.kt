@@ -49,8 +49,9 @@ import kotlinx.coroutines.delay
 @Composable
 fun RewardsScreen(
     state: AdRewardState,
+    clubReputation: Int,
     onBack: () -> Unit,
-    onClaim: (Long) -> Long
+    onClaim: () -> Long
 ) {
     var playing by remember { mutableStateOf(false) }
     var remaining by remember { mutableStateOf(0) }
@@ -65,8 +66,7 @@ fun RewardsScreen(
             delay(1000)
             remaining -= 1
         }
-        val reward = onClaim(System.currentTimeMillis() / 86_400_000L)
-        claimed = reward
+        claimed = onClaim()
         playing = false
     }
 
@@ -102,7 +102,7 @@ fun RewardsScreen(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Up to ${Fmt.money(AdRewardState.MAX_DAILY_TOTAL)} a day, free. " +
+                    text = "Up to ${Fmt.money(AdRewardState.maxDailyTotal(clubReputation))} a day, free. " +
                         "Rewards reset each calendar day.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -146,7 +146,7 @@ fun RewardsScreen(
                     FmPrimaryButton(
                         text = when {
                             exhausted -> "Come back tomorrow"
-                            else -> "Watch advert for ${Fmt.money(state.nextReward)}"
+                            else -> "Watch advert for ${Fmt.money(state.nextReward(clubReputation))}"
                         },
                         onClick = { playing = true },
                         enabled = !exhausted,

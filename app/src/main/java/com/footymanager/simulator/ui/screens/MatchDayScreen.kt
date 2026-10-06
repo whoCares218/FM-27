@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.footymanager.simulator.domain.engine.MatchPhase
+import com.footymanager.simulator.domain.engine.ScoutingReport
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Club
 import com.footymanager.simulator.domain.model.Aggression
@@ -249,6 +250,12 @@ private fun PreMatchView(
             }
         }
 
+        matchDay.scoutingReport?.let { report ->
+            item {
+                ScoutingCard(report)
+            }
+        }
+
         matchDay.attendanceEstimate?.let { estimate ->
             item {
                 FmCard {
@@ -332,6 +339,109 @@ private fun MatchInfoRow(career: Career, matchDay: MatchDayState, homeClub: Club
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun ScoutingCard(report: ScoutingReport) {
+    FmCard(accent = StatColors.elite) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SectionHeader("Scouting report")
+            InfoPill(report.competition.shortLabel)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            StatCell(
+                "Their position",
+                if (report.leaguePosition == 0) "-" else "${report.leaguePosition}"
+            )
+            StatCell("Points", "${report.points}")
+            StatCell("Goals for", "${report.goalsFor}")
+            StatCell("Goals against", "${report.goalsAgainst}")
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Form",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(8.dp))
+            FormStrip(
+                results = report.recentForm.map {
+                    when (it) {
+                        2 -> 'W'
+                        1 -> 'D'
+                        else -> 'L'
+                    }
+                },
+                size = 16.dp
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = "%.1f goals/game".format(report.goalsPerGame),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = report.threatSummary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        listOfNotNull(report.keyPlayer, report.topScorer, report.playmaker)
+            .distinctBy { it.playerId }
+            .forEach { player ->
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    InfoPill(player.position.short)
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = player.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${player.reason} · ${player.goals}G ${player.assists}A",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (player.averageRating > 0) {
+                        Text(
+                            text = "%.2f".format(player.averageRating),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = StatColors.elite
+                        )
+                    }
+                }
+            }
+
+        if (report.unavailableCount > 0) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "${report.unavailableCount} player(s) missing through injury or suspension.",
+                style = MaterialTheme.typography.labelSmall,
+                color = StatColors.average
+            )
+        }
+        report.lastMeeting?.let { meeting ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = meeting,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

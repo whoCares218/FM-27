@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithText
@@ -692,6 +691,7 @@ class ScreenRenderTest {
         setScreen {
             com.footymanager.simulator.ui.screens.RewardsScreen(
                 state = com.footymanager.simulator.domain.model.AdRewardState(),
+                clubReputation = 72,
                 onBack = {},
                 onClaim = { 3_000_000L }
             )
@@ -859,7 +859,7 @@ class ScreenRenderTest {
     }
 
     @Test
-    fun `the settings screen has no background-music controls`() {
+    fun `the settings screen exposes all five music tracks`() {
         setScreen {
             SettingsScreen(
                 settings = com.footymanager.simulator.domain.data.GameSettings(),
@@ -874,13 +874,13 @@ class ScreenRenderTest {
                 onAbout = {}
             )
         }
-        // Sound effects survive; the whole music system is gone.
         composeRule.onAllNodes(hasScrollAction())[0]
-            .performScrollToNode(hasText("Sound effects", substring = true))
-        composeRule.onNodeWithText("Sound effects").assertExists()
-        composeRule.onAllNodes(hasText("BACKGROUND MUSIC", substring = true)).assertCountEquals(0)
-        composeRule.onAllNodes(hasText("TRACK", substring = true)).assertCountEquals(0)
-        composeRule.onAllNodes(hasText("PLAY MODE", substring = true)).assertCountEquals(0)
-        composeRule.onAllNodes(hasText("Preview track", substring = true)).assertCountEquals(0)
+            .performScrollToNode(hasText("BACKGROUND MUSIC", substring = true))
+        composeRule.onNodeWithText("BACKGROUND MUSIC", substring = true).assertExists()
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("Calm Manager", substring = true))
+        com.footymanager.simulator.ui.sound.MusicTrack.entries.forEach { track ->
+            composeRule.onNodeWithText(track.label, substring = true).assertExists()
+        }
     }
 }
