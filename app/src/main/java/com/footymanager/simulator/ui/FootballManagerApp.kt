@@ -90,31 +90,6 @@ fun FootballManagerApp(viewModel: GameViewModel) {
         val snackbarHostState = remember { SnackbarHostState() }
         var showAbout by remember { mutableStateOf(false) }
 
-        // Keep the background music running while the app is in the foreground,
-        // and stop it cleanly when the user leaves so it never plays in the
-        // background or fights another app for audio focus. The player's setting
-        // is re-asserted on every start, so turning music off stays off.
-        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-        androidx.compose.runtime.DisposableEffect(lifecycleOwner, settings.musicEnabled) {
-            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                when (event) {
-                    androidx.lifecycle.Lifecycle.Event.ON_START -> {
-                        viewModel.music.enabled = settings.musicEnabled
-                        viewModel.music.volume = settings.musicVolume
-                        viewModel.startMusic()
-                    }
-                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> viewModel.stopMusic()
-                    else -> Unit
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            // The composable is currently resumed; make sure music is running.
-            viewModel.music.enabled = settings.musicEnabled
-            viewModel.music.volume = settings.musicVolume
-            viewModel.startMusic()
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-        }
-
         LaunchedEffect(message) {
             message?.let {
                 snackbarHostState.showSnackbar(it)
@@ -691,13 +666,7 @@ private fun AppNavHost(
                 onSetDarkTheme = { viewModel.setDarkTheme(it) },
                 onSetDifficulty = { viewModel.setDifficulty(it) },
                 onSetAnimationSpeed = { viewModel.setAnimationSpeed(it) },
-                onSetMusic = { viewModel.setMusic(it) },
-                onSetMusicTrack = { viewModel.setMusicTrack(it) },
-                onSetMusicPlayMode = { viewModel.setMusicPlayMode(it) },
-                onPreviewMusic = { viewModel.previewMusic() },
-                onStopMusicPreview = { viewModel.stopMusicPreview() },
                 onSetSoundVolume = { viewModel.setSoundVolume(it) },
-                onSetMusicVolume = { viewModel.setMusicVolume(it) },
                 onResetCareer = {
                     viewModel.resetCareer()
                     navController.navigate(Routes.MAIN_MENU) {

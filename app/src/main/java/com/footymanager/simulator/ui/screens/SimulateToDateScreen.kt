@@ -44,9 +44,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.CompetitionType
 import com.footymanager.simulator.domain.model.GameDate
+import com.footymanager.simulator.domain.model.League
 import com.footymanager.simulator.domain.model.Match
 import com.footymanager.simulator.ui.components.FmCard
 import com.footymanager.simulator.ui.components.FmPrimaryButton
@@ -71,23 +73,28 @@ private fun competitionColor(competition: CompetitionType): Color = when (compet
     CompetitionType.LEAGUE -> StatColors.good
 }
 
-/** A one-word marker shown on a day cell so the schedule reads at a glance. */
-private fun competitionMarker(competition: CompetitionType): String = when (competition) {
-    CompetitionType.LEAGUE -> "LG"
-    CompetitionType.DOMESTIC_CUP -> "CUP"
+/**
+ * A compact, non-truncated competition label for the narrow calendar cell. The
+ * real competition is read from the fixture: a domestic fixture resolves to its
+ * own league's short name (Premier, La Liga, Bundesliga …), a continental tie to
+ * "UCL"/"UEL"/"UECL" and the cup to "Cup".
+ */
+private fun competitionShortLabel(match: Match): String = when (match.competition) {
+    CompetitionType.LEAGUE -> League.byId(match.leagueId).shortName
+    CompetitionType.DOMESTIC_CUP -> "Cup"
     CompetitionType.CHAMPIONS_LEAGUE -> "UCL"
     CompetitionType.EUROPA_LEAGUE -> "UEL"
     CompetitionType.CONFERENCE_LEAGUE -> "UECL"
-    CompetitionType.FRIENDLY -> "FR"
+    CompetitionType.FRIENDLY -> "Friendly"
 }
 
 /**
  * Calendar screen: pick a date between tomorrow and the end of the season.
  *
- * Every day the user's club plays on is marked with a small competition tag, and
- * the visible month's fixtures are listed in full above the grid, so the whole
- * run-in is legible without tapping anything. The competition text is read from
- * each fixture, never hard-coded.
+ * Each day cell shows the day number plus, on a match day, the user's opponent
+ * and competition, so the whole run-in is legible without tapping anything. Below
+ * the calendar the sections run SIMULATE TO THIS DATE, YOUR FIXTURES then ALL
+ * FIXTURES. Every competition label is read from the fixture, never hard-coded.
  */
 @Composable
 fun SimulateToDateScreen(
@@ -104,6 +111,7 @@ fun SimulateToDateScreen(
     var visibleYear by remember { mutableStateOf(earliest.year) }
     var selected by remember { mutableStateOf<GameDate?>(null) }
     var confirming by remember { mutableStateOf(false) }
+    var showAllFixtures by remember { mutableStateOf(false) }
 
     val monthFixtures = remember(career.fixtures, visibleMonth, visibleYear, userClubId) {
         career.fixtures
@@ -116,6 +124,20 @@ fun SimulateToDateScreen(
                 it.involves(userClubId) && it.date?.year == visibleYear && it.date?.month == visibleMonth
             }
             .sortedWith(compareBy({ it.date?.year ?: 9999 }, { it.date?.month ?: 12 }, { it.date?.day ?: 31 }))
+    }
+    val monthUserByDate = remember(monthUserFixtures) { monthUserFixtures.groupBy { it.date!! } }
+
+    // The user's remaining fixtures for the whole season, in chronological order.
+    val seasonUserFixtures = remember(career.fixtures, userClubId, today) {
+        career.fixtures
+            .filter { it.involves(userClubId) && it.date != null && !it.date!!.isBefore(today) }
+            .sortedBy { it.date!!.toEpochDay() }
+    }
+    val seasonByDate = remember(career.fixtures, today) {
+        career.fixtures
+            .filter { it.date != null && !it.date!!.isBefore(today) }
+            .groupBy { it.date!! }
+            .toSortedMap(compareBy { it.toEpochDay() })
     }
 
     val monthLabel = "${GameDate.MONTH_NAMES[visibleMonth - 1]} $visibleYear"
@@ -186,7 +208,9 @@ fun SimulateToDateScreen(
                     )
                     MonthArrow(forward = true, enabled = canStepForward, onClick = { stepMonth(1) })
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
+                CompetitionLegend()
+                Spacer(Modifier.height(8.dp))
 
                 Row(modifier = Modifier.fillMaxWidth()) {
                     GameDate.DAY_NAMES.forEach { day ->
@@ -204,21 +228,22 @@ fun SimulateToDateScreen(
                 cells.chunked(7).forEach { week ->
                     Row(modifier = Modifier.fillMaxWidth()) {
                         week.forEach { day ->
-                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopCenter) {
                                 if (day == null) {
-                                    Spacer(Modifier.size(44.dp))
+                                    Spacer(Modifier.size(52.dp))
                                 } else {
                                     val date = GameDate(visibleYear, visibleMonth, day)
-                                    val dayUserFixtures = (monthFixtures[date] ?: emptyList())
-                                        .filter { it.involves(userClubId) }
+                                    val dayUserMatch = (monthUserByDate[date] ?: emptyList())
+                                        .minByOrNull { it.competition.ordinal }
                                     CalendarDay(
+                                        career = career,
                                         date = date,
                                         today = today,
                                         horizon = horizon,
                                         earliest = earliest,
                                         selected = selected == date,
                                         matchCount = monthFixtures[date]?.size ?: 0,
-                                        userFixtures = dayUserFixtures,
+                                        userMatch = dayUserMatch,
                                         onClick = { selected = date }
                                     )
                                 }
@@ -226,102 +251,157 @@ fun SimulateToDateScreen(
                         }
                         if (week.size < 7) {
                             repeat(7 - week.size) {
-                                Box(modifier = Modifier.weight(1f)) { Spacer(Modifier.size(44.dp)) }
+                                Box(modifier = Modifier.weight(1f)) { Spacer(Modifier.size(52.dp)) }
                             }
                         }
                     }
                 }
-            }
-        }
 
-        item {
-            val chosen = selected
-            if (chosen == null) {
-                FmCard {
-                    Text(
-                        text = "Tap a date to see the full fixture list. You can simulate to any " +
-                            "day from tomorrow up to the end of the season.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                val chosen = selected
+                if (chosen != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f))
                     )
-                }
-            } else {
-                val fixtures = career.fixturesOnDate(chosen)
-                    .sortedWith(compareBy({ it.competition.ordinal }, { it.id }))
-                FmCard(padding = 12.dp) {
-                    SectionHeader(chosen.display()) {
-                        Text(
-                            text = "${fixtures.size} fixtures",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    Spacer(Modifier.height(10.dp))
+                    val dayFixtures = remember(career.fixtures, chosen) {
+                        career.fixturesOnDate(chosen)
+                            .sortedWith(compareBy({ it.competition.ordinal }, { it.id }))
                     }
-                    Spacer(Modifier.height(8.dp))
-                    if (fixtures.isEmpty()) {
+                    Text(
+                        text = chosen.display(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    if (dayFixtures.isEmpty()) {
                         Text(
                             text = "No matches scheduled on this date.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
-                        fixtures.forEach { match ->
-                            FixtureLine(career = career, match = match)
-                        }
+                        dayFixtures.forEach { match -> FixtureLine(career = career, match = match) }
                     }
                 }
             }
         }
 
+        // ---- 1. SIMULATE TO THIS DATE ----
         item {
             val chosen = selected
-            if (chosen != null && !confirming) {
-                val count = remember(career, chosen) {
-                    career.fixtures.count { !it.isPlayed && it.date != null && !it.date.isAfter(chosen) }
-                }
-                FmCard(accent = MaterialTheme.colorScheme.primary) {
-                    Text(
-                        text = "SELECTED DATE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = chosen.numeric(),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = "$count matches will be simulated across every competition.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    FmPrimaryButton(
-                        text = "SIMULATE TO THIS DATE",
-                        onClick = { confirming = true },
-                        icon = Icons.Outlined.FastForward
-                    )
-                }
-            } else if (chosen != null && confirming) {
+            if (chosen != null && confirming) {
                 SimulateConfirmCard(
                     career = career,
                     target = chosen,
                     onCancel = { confirming = false },
                     onConfirm = { onConfirm(chosen) }
                 )
+            } else {
+                FmCard(accent = MaterialTheme.colorScheme.primary) {
+                    SectionHeader("Simulate to this date")
+                    Spacer(Modifier.height(8.dp))
+                    if (chosen == null) {
+                        Text(
+                            text = "Tap a date on the calendar. You can simulate to any day from " +
+                                "tomorrow up to the end of the season.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "SIMULATE TO",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = chosen.display(),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        val count = remember(career, chosen) {
+                            career.fixtures.count { !it.isPlayed && it.date != null && !it.date.isAfter(chosen) }
+                        }
+                        Text(
+                            text = "$count matches will be simulated across every competition.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        FmPrimaryButton(
+                            text = "SIMULATE TO THIS DATE",
+                            onClick = { confirming = true },
+                            icon = Icons.Outlined.FastForward
+                        )
+                    }
+                }
             }
         }
 
-        // ---- The user's fixtures for the visible month, listed up front ----
-        if (monthUserFixtures.isNotEmpty()) {
-            item {
-                FmCard(padding = 12.dp, accent = MaterialTheme.colorScheme.primary) {
-                    SectionHeader("YOUR FIXTURES · $monthLabel")
-                    Spacer(Modifier.height(8.dp))
-                    monthUserFixtures.forEach { match ->
+        // ---- 2. YOUR FIXTURES (chronological, whole season) ----
+        item {
+            FmCard(padding = 12.dp, accent = MaterialTheme.colorScheme.primary) {
+                SectionHeader("Your fixtures") {
+                    Text(
+                        text = "${seasonUserFixtures.size} left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                if (seasonUserFixtures.isEmpty()) {
+                    Text(
+                        text = "No fixtures remaining this season.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    seasonUserFixtures.forEach { match ->
                         UserFixtureLine(career = career, match = match)
                     }
+                }
+            }
+        }
+
+        // ---- 3. ALL FIXTURES (collapsible, lazy by day) ----
+        item {
+            FmCard(padding = 12.dp) {
+                SectionHeader("All fixtures") {
+                    FmSecondaryButton(
+                        text = if (showAllFixtures) "Hide" else "Show",
+                        onClick = { showAllFixtures = !showAllFixtures }
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (showAllFixtures) {
+                        "Every scheduled match this season, by date."
+                    } else {
+                        "Every scheduled match this season, by date. Tap Show to expand."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (showAllFixtures) {
+            items(seasonByDate.keys.toList(), key = { it.toEpochDay() }) { date ->
+                FmCard(padding = 12.dp) {
+                    Text(
+                        text = date.display(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    seasonByDate[date]!!.forEach { match -> FixtureLine(career = career, match = match) }
                 }
             }
         }
@@ -329,6 +409,38 @@ fun SimulateToDateScreen(
         item {
             FmSecondaryButton(text = "Back", onClick = onBack)
         }
+    }
+}
+
+/** Colour key for the calendar markers, so the icons are never ambiguous. */
+@Composable
+private fun CompetitionLegend() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LegendDot("League", StatColors.good)
+        LegendDot("Europe", StatColors.elite)
+        LegendDot("Cup", StatColors.poor)
+    }
+}
+
+@Composable
+private fun LegendDot(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -356,20 +468,24 @@ private fun MonthArrow(forward: Boolean, enabled: Boolean, onClick: () -> Unit) 
 
 @Composable
 private fun CalendarDay(
+    career: Career,
     date: GameDate,
     today: GameDate,
     horizon: GameDate,
     earliest: GameDate,
     selected: Boolean,
     matchCount: Int,
-    userFixtures: List<Match>,
+    userMatch: Match?,
     onClick: () -> Unit
 ) {
     val isToday = date == today
     val selectable = !date.isBefore(earliest) && !date.isAfter(horizon)
-    val hasUserMatch = userFixtures.isNotEmpty()
-    val marker = userFixtures.minByOrNull { it.competition.ordinal }
-    val markerColor = marker?.let { competitionColor(it.competition) } ?: MaterialTheme.colorScheme.primary
+    val hasUserMatch = userMatch != null
+    val markerColor = userMatch?.let { competitionColor(it.competition) } ?: MaterialTheme.colorScheme.primary
+    val opponentName = userMatch?.let { m ->
+        career.club(m.opponentOf(career.userClubId))?.shortName
+    }
+    val competitionText = userMatch?.let { competitionShortLabel(it) }
     val background = when {
         selected -> MaterialTheme.colorScheme.primary
         hasUserMatch -> markerColor.copy(alpha = 0.16f)
@@ -386,7 +502,7 @@ private fun CalendarDay(
     Column(
         modifier = Modifier
             .padding(2.dp)
-            .size(44.dp)
+            .height(52.dp)
             .clip(MaterialTheme.shapes.small)
             .background(background)
             .then(
@@ -398,7 +514,8 @@ private fun CalendarDay(
                     else -> Modifier
                 }
             )
-            .clickable(enabled = selectable, onClick = onClick),
+            .clickable(enabled = selectable, onClick = onClick)
+            .padding(horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -408,13 +525,28 @@ private fun CalendarDay(
             fontWeight = if (isToday || selected || hasUserMatch) FontWeight.Bold else FontWeight.Normal,
             color = textColor
         )
-        if (hasUserMatch && marker != null) {
+        if (hasUserMatch && opponentName != null) {
             Text(
-                text = competitionMarker(marker.competition),
+                text = opponentName,
                 style = MaterialTheme.typography.labelSmall,
                 color = if (selected) MaterialTheme.colorScheme.onPrimary else markerColor,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
             )
+            if (competitionText != null) {
+                Text(
+                    text = competitionText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 8.sp,
+                    lineHeight = 9.sp,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
         } else if (matchCount > 0 && selectable) {
             Box(
                 modifier = Modifier

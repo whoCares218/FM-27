@@ -61,7 +61,7 @@ class SimulateToDateScreenTest {
     }
 
     @Test
-    fun `selecting a date reveals the selected-date card and the simulate button`() {
+    fun `selecting a date reveals the simulate card and the simulate button`() {
         val c = career()
         setScreen { SimulateToDateScreen(career = c, onBack = {}, onConfirm = {}) }
         // Tomorrow is always selectable and never outside the season window.
@@ -70,8 +70,9 @@ class SimulateToDateScreenTest {
         composeRule.waitForIdle()
         composeRule.onAllNodes(hasScrollAction())[0]
             .performScrollToNode(hasText("SIMULATE TO THIS DATE", substring = true))
-        composeRule.onNodeWithText("SELECTED DATE").assertExists()
-        composeRule.onNodeWithText("SIMULATE TO THIS DATE").assertExists()
+        // The simulate card now carries the chosen date and the action.
+        composeRule.onNodeWithText("SIMULATE TO").assertExists()
+        composeRule.onAllNodes(hasText("SIMULATE TO THIS DATE", substring = true))[0].assertExists()
     }
 
     @Test
@@ -145,6 +146,57 @@ class SimulateToDateScreenTest {
         composeRule.onAllNodes(hasScrollAction())[0]
             .performScrollToNode(hasText(opponent.name, substring = true))
         composeRule.onAllNodes(hasText(opponent.name, substring = true))[0].assertExists()
+    }
+
+    @Test
+    fun `the calendar day cell shows the opponent and competition for a match day`() {
+        val c = career()
+        // The earliest user fixture sits in the month the calendar opens on.
+        val next = c.fixtures
+            .filter { it.involves(c.userClubId) && !it.isPlayed && it.date != null }
+            .minByOrNull { it.date!!.toEpochDay() }!!
+        val opponent = c.club(next.opponentOf(c.userClubId))!!
+        setScreen { SimulateToDateScreen(career = c, onBack = {}, onConfirm = {}) }
+        // The day cell carries the opponent's short name so the month reads at a glance.
+        composeRule.onAllNodes(hasText(opponent.shortName, substring = true))[0].assertExists()
+        // And the real competition short label, read from the fixture.
+        val label = when (next.competition) {
+            com.footymanager.simulator.domain.model.CompetitionType.LEAGUE ->
+                com.footymanager.simulator.domain.model.League.byId(next.leagueId).shortName
+            else -> next.competition.label
+        }
+        composeRule.onAllNodes(hasText(label, substring = true))[0].assertExists()
+    }
+
+    @Test
+    fun `the screen presents simulate, your fixtures then all fixtures`() {
+        val c = career()
+        setScreen { SimulateToDateScreen(career = c, onBack = {}, onConfirm = {}) }
+        val list = composeRule.onAllNodes(hasScrollAction())[0]
+        list.performScrollToNode(hasText("SIMULATE TO THIS DATE", substring = true))
+        composeRule.onAllNodes(hasText("SIMULATE TO THIS DATE", substring = true))[0].assertExists()
+        list.performScrollToNode(hasText("YOUR FIXTURES", substring = true))
+        composeRule.onNodeWithText("YOUR FIXTURES", substring = true).assertExists()
+        list.performScrollToNode(hasText("ALL FIXTURES", substring = true))
+        composeRule.onNodeWithText("ALL FIXTURES", substring = true).assertExists()
+    }
+
+    @Test
+    fun `all fixtures expands to list every scheduled fixture`() {
+        val c = career()
+        setScreen { SimulateToDateScreen(career = c, onBack = {}, onConfirm = {}) }
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText("ALL FIXTURES", substring = true))
+        composeRule.onNodeWithText("Show").performClick()
+        composeRule.waitForIdle()
+        // A fixture from another club appears once the full list is expanded.
+        val other = c.fixtures.first {
+            !it.isPlayed && it.date != null && !it.involves(c.userClubId)
+        }
+        val home = c.club(other.homeClubId)!!.name
+        composeRule.onAllNodes(hasScrollAction())[0]
+            .performScrollToNode(hasText(home, substring = true))
+        composeRule.onAllNodes(hasText(home, substring = true))[0].assertExists()
     }
 
     @Test

@@ -168,13 +168,12 @@ leagues the same size, or give each league its own matchday count.
 - ID allocation bug to remember: `NegotiationEngine.upsert` must derive a new record's id
   from the ids already in the running list, not just `career.idCounter`, or two records
   created in one sync collide. Covered by `NegotiationTest`.
-- Audio: `MusicEngine` synthesises an original, copyright-safe pad (no assets) on a
-  daemon thread; `SoundManager` wraps `ToneGenerator`. `MusicEngine.enabled` is a
-  setter that starts/stops immediately, and `FootballManagerApp` drives start/stop from
-  the lifecycle (`ON_START`/`ON_STOP`), re-asserting the settings on start so "music off"
-  stays off across navigation.
-- Settings: `GameSettings` carries `musicEnabled`, `soundVolume`, `musicVolume`; the
-  Audio card in `SettingsScreen` exposes toggles + sliders. All persist via DataStore.
+- Audio: the background-music system was removed. Only `SoundManager` remains, wrapping
+  `ToneGenerator` for short UI cues (gated by the `soundEnabled` setting). There is no
+  music engine, track enum or playback lifecycle to maintain.
+- Settings: `GameSettings` carries `soundEnabled`, `soundVolume` and `vibrationEnabled`;
+  the Audio card in `SettingsScreen` exposes a sound-effects toggle and a volume slider.
+  All persist via DataStore.
 - Tests: `NegotiationTest` covers create/counter/no-duplicate/complete/reject/withdraw +
   save-load; `ScreenRenderTest` renders the desk, detail and history screens.
 
@@ -235,7 +234,7 @@ leagues the same size, or give each league its own matchday count.
   ratings/appearances, total wages paid, injury days, single-season records, notable
   matches and all-time finance/record transfers. `ClubHistoryEngine` accumulates records at
   season turnover; the data lives in `Career.clubHistory` and survives save/load.
-- Music: `MusicTrack` has five moods; `MusicEngine` synthesises them (no assets) and
-  `SettingsScreen` exposes track, play mode (selected/shuffle), preview, volume and on/off,
-  all persisted. Do not restart playback on navigation; drive it from the app lifecycle.
+- Music: removed. There is no background-music engine, track selection or play mode.
+  Keep sound effects (`SoundManager`) only; do not reintroduce a navigation-driven
+  playback lifecycle.
 

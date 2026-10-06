@@ -4,8 +4,6 @@ import com.footymanager.simulator.domain.data.AnimationSpeed
 import com.footymanager.simulator.domain.data.CareerStore
 import com.footymanager.simulator.domain.data.GameSettings
 import com.footymanager.simulator.domain.data.SettingsStore
-import com.footymanager.simulator.ui.sound.MusicPlayMode
-import com.footymanager.simulator.ui.sound.MusicTrack
 import com.footymanager.simulator.domain.model.Career
 import com.footymanager.simulator.domain.model.Difficulty
 import kotlinx.coroutines.flow.Flow
@@ -60,13 +58,5 @@ class FakeSettingsStore : SettingsStore {
 
     override suspend fun setDifficulty(difficulty: Difficulty) = state.update { it.copy(difficulty = difficulty) }
 
-    override suspend fun setMusic(enabled: Boolean) = state.update { it.copy(musicEnabled = enabled) }
-
-    override suspend fun setMusicTrack(track: MusicTrack) = state.update { it.copy(musicTrack = track) }
-
-    override suspend fun setMusicPlayMode(mode: MusicPlayMode) = state.update { it.copy(musicPlayMode = mode) }
-
     override suspend fun setSoundVolume(volume: Float) = state.update { it.copy(soundVolume = volume) }
-
-    override suspend fun setMusicVolume(volume: Float) = state.update { it.copy(musicVolume = volume) }
 }
